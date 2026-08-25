@@ -1,7 +1,7 @@
 // Real 3D Earth (web only) — an actual textured sphere rendered with
-// three.js. The globe stays still; the only way it turns is dragging it
-// by hand. No auto-rotation, no zoom. Each bowl is a real photo pinned to
-// its country; tapping one pops the bowl out full-circle over the globe.
+// three.js. The globe rotates gently on its own and can also be turned by
+// hand. No zoom. Each bowl is a real photo pinned to its country; tapping
+// one pops the bowl out full-circle over the globe.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 import * as THREE from 'three';
@@ -19,6 +19,7 @@ interface Props {
 
 const SPHERE_RADIUS = 1.3;
 const CAMERA_Z = 3.2;
+const AUTO_ROTATION_SPEED = 0.00012; // radians per millisecond (one turn in ~52 seconds)
 
 function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
@@ -184,7 +185,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       }
     });
 
-    // Globe stays still unless the hand drags it — no auto-rotate, no zoom.
+    // Keep the globe drifting until the user takes control by dragging it.
     const state = { rotY: 0.3, rotX: 0, dragging: false, lastX: 0, lastY: 0 };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -211,7 +212,14 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     window.addEventListener('pointerup', onPointerUp);
 
     let raf = 0;
-    const animate = () => {
+    let lastFrameTime = performance.now();
+    const animate = (frameTime: number) => {
+      // Use elapsed time so the rotation speed is consistent across displays.
+      // Clamp it to prevent a large jump after returning to a background tab.
+      const elapsed = Math.min(frameTime - lastFrameTime, 100);
+      lastFrameTime = frameTime;
+      if (!state.dragging) state.rotY += AUTO_ROTATION_SPEED * elapsed;
+
       sphere.rotation.y = state.rotY;
       sphere.rotation.x = state.rotX;
       sphere.updateMatrixWorld();
@@ -239,7 +247,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
     };
-    animate();
+    raf = requestAnimationFrame(animate);
 
     return () => {
       cancelAnimationFrame(raf);
