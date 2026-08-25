@@ -1,0 +1,25 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    // Matches Metro's own web-build resolution: prefer Foo.web.tsx, fall
+    // back to Foo.tsx. Without this, `tsc` can't find any of the several
+    // .web.tsx-only components in this project (GlobeExplorer, RadiusMapEditor,
+    // etc.) since it doesn't know about Expo's platform-suffix convention.
+    "moduleSuffixes": [".web", ""],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@/assets/*": [
+        "./assets/*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
+}

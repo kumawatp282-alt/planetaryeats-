@@ -1,0 +1,9 @@
+{
+  "buildCommand": "npx expo export -p web",
+  "outputDirectory": "dist",
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/item/:id*", "destination": "/item/[id]" },
+    { "source": "/receipt/:orderId*", "destination": "/receipt/[orderId]" }
+  ]
+}
