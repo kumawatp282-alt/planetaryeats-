@@ -1,7 +1,7 @@
 // Persistent top bar, shown above every screen (wired in app/_layout.tsx):
 // back/brand, delivery address, Delivery/Collection toggle, language, menu.
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../context/StoreContext';
@@ -9,6 +9,8 @@ import { colors, radii, spacing } from '../constants/theme';
 import { getOpenStatus } from '../lib/openingHours';
 import AddressModal from './AddressModal';
 import NavMenu from './NavMenu';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logoImage = require('../assets/planetary-eats-logo.png');
 
 const PAGE_TITLES: Record<string, string> = {
   '/cart': 'Your cart',
@@ -53,9 +55,12 @@ export default function AppHeader() {
           </Pressable>
         )}
         <Pressable onPress={() => router.push('/')} style={styles.brandWrap}>
-          <Text style={styles.brandText} numberOfLines={1}>
-            Planetary Eats
-          </Text>
+          <Image
+            source={logoImage}
+            style={styles.brandLogo}
+            resizeMode="contain"
+            accessibilityLabel="Planetary Eats"
+          />
           {pageTitle && <Text style={styles.pageTitleText}>{pageTitle}</Text>}
         </Pressable>
       </View>
@@ -163,11 +168,13 @@ const styles = StyleSheet.create({
   brandWrap: {
     marginLeft: 2,
   },
-  brandText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.ink,
-    fontFamily: 'Fraunces, Georgia, serif',
+  brandLogo: {
+    width: 44,
+    height: 28,
+    // The source image is a black wordmark on an opaque white square —
+    // multiply blend drops the white out so it reads as transparent
+    // against the header's own background, whatever shade that is.
+    mixBlendMode: 'multiply',
   },
   pageTitleText: {
     fontSize: 11,

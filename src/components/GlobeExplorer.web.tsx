@@ -11,6 +11,8 @@ import { colors, fonts, radii, spacing } from '../constants/theme';
 import BowlPopModal from './BowlPopModal';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const earthTextureModule = require('../assets/earth.jpg');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logoImage = require('../assets/planetary-eats-logo.png');
 
 interface Props {
   items: MenuItem[]; // must have `origin` set
@@ -339,7 +341,12 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         />
       ))}
 
-      <Text style={styles.brand}>Planetary Eats</Text>
+      <Image
+        source={logoImage}
+        style={styles.brandLogo}
+        resizeMode="contain"
+        accessibilityLabel="Planetary Eats"
+      />
       <Text style={styles.tagline}>Explore the World, One Bowl at a Time.</Text>
 
       {/* Everything below is confined to the globe's own footprint — the
@@ -468,11 +475,11 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
 }
 
 const styles = {
-  brand: {
-    fontSize: 28,
-    fontWeight: '600' as const,
-    color: colors.ink,
-    fontFamily: fonts.heading,
+  brandLogo: {
+    width: 220,
+    height: 68,
+    // Same multiply trick as AppHeader — see its comment for why.
+    mixBlendMode: 'multiply' as const,
   },
   tagline: {
     fontSize: 15,
