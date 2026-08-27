@@ -98,6 +98,8 @@ function SettingsSection() {
   const [newPostcode, setNewPostcode] = useState('');
   const [minOrder, setMinOrder] = useState(String(appSettings.minimumOrderValue));
   const [hours, setHours] = useState<OpeningHours>(appSettings.openingHours);
+  const [promoCode, setPromoCode] = useState(appSettings.promoCode);
+  const [promoDiscountPct, setPromoDiscountPct] = useState(String(appSettings.promoDiscount * 100));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -106,7 +108,16 @@ function SettingsSection() {
     setPostcodes(appSettings.closedPostcodes);
     setMinOrder(String(appSettings.minimumOrderValue));
     setHours(appSettings.openingHours);
-  }, [appSettings.deliveryRadiusKm, appSettings.closedPostcodes, appSettings.minimumOrderValue, appSettings.openingHours]);
+    setPromoCode(appSettings.promoCode);
+    setPromoDiscountPct(String(appSettings.promoDiscount * 100));
+  }, [
+    appSettings.deliveryRadiusKm,
+    appSettings.closedPostcodes,
+    appSettings.minimumOrderValue,
+    appSettings.openingHours,
+    appSettings.promoCode,
+    appSettings.promoDiscount,
+  ]);
 
   const addPostcode = () => {
     const trimmed = newPostcode.trim();
@@ -124,12 +135,17 @@ function SettingsSection() {
   const save = async () => {
     const parsedRadius = Number(radius);
     const parsedMinOrder = Number(minOrder);
+    const parsedPromoPct = Number(promoDiscountPct);
     if (!Number.isFinite(parsedRadius) || parsedRadius <= 0) {
       setMessage('Enter a valid radius in km.');
       return;
     }
     if (!Number.isFinite(parsedMinOrder) || parsedMinOrder < 0) {
       setMessage('Enter a valid minimum order value.');
+      return;
+    }
+    if (!Number.isFinite(parsedPromoPct) || parsedPromoPct < 0 || parsedPromoPct > 100) {
+      setMessage('Enter a valid promo discount percentage (0-100).');
       return;
     }
     setSaving(true);
@@ -139,6 +155,8 @@ function SettingsSection() {
       closedPostcodes: postcodes,
       minimumOrderValue: parsedMinOrder,
       openingHours: hours,
+      promoCode: promoCode.trim().toUpperCase(),
+      promoDiscount: parsedPromoPct / 100,
     });
     setSaving(false);
     setMessage(error ?? 'Saved.');
@@ -239,6 +257,29 @@ function SettingsSection() {
           </Pressable>
         </View>
       ))}
+
+      <Text style={[typography.label, { marginTop: spacing.lg }]}>PROMO CODE</Text>
+      <Text style={typography.bodyMuted}>
+        Leave blank to hide the promo code field at checkout entirely.
+      </Text>
+      <TextInput
+        value={promoCode}
+        onChangeText={setPromoCode}
+        autoCapitalize="characters"
+        style={styles.input}
+        placeholder="e.g. WORLD10"
+        placeholderTextColor={colors.inkMuted}
+      />
+
+      <Text style={[typography.label, { marginTop: spacing.lg }]}>PROMO DISCOUNT (%)</Text>
+      <TextInput
+        value={promoDiscountPct}
+        onChangeText={setPromoDiscountPct}
+        keyboardType="numeric"
+        style={styles.input}
+        placeholder="10"
+        placeholderTextColor={colors.inkMuted}
+      />
 
       <Pressable style={styles.saveButton} onPress={save} disabled={saving}>
         <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save settings'}</Text>

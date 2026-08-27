@@ -16,9 +16,6 @@ const PAYMENT_OPTIONS: { id: PaymentMethod; label: string }[] = [
   { id: 'cash', label: 'Cash on delivery' },
 ];
 
-const PROMO_CODE = 'WORLD10';
-const PROMO_DISCOUNT = 0.1;
-
 export default function CheckoutScreen() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -48,7 +45,8 @@ export default function CheckoutScreen() {
     }
   }, [authLoading, user]);
 
-  const discount = promoApplied ? cartSubtotal * PROMO_DISCOUNT : 0;
+  const promoCode = appSettings.promoCode.trim().toUpperCase();
+  const discount = promoApplied ? cartSubtotal * appSettings.promoDiscount : 0;
   const total = cartSubtotal - discount + (method === 'delivery' ? deliveryFee : 0);
   const openStatus = getOpenStatus(appSettings.openingHours);
   const belowMinimum = appSettings.minimumOrderValue > 0 && cartSubtotal < appSettings.minimumOrderValue;
@@ -60,7 +58,7 @@ export default function CheckoutScreen() {
     (method === 'pickup' || (address.trim().length > 0 && deliveryStatus === 'ok'));
 
   const applyPromo = () => {
-    if (promoInput.trim().toUpperCase() === PROMO_CODE) {
+    if (promoCode && promoInput.trim().toUpperCase() === promoCode) {
       setPromoApplied(true);
     }
   };
@@ -210,25 +208,29 @@ export default function CheckoutScreen() {
           Payment isn't actually processed yet — this is a placeholder until a real payment provider is wired up.
         </Text>
 
-        <Text style={[typography.h3, { marginTop: spacing.lg }]}>Promo code</Text>
-        <View style={styles.promoRow}>
-          <TextInput
-            value={promoInput}
-            onChangeText={setPromoInput}
-            placeholder="Enter code"
-            placeholderTextColor={colors.inkMuted}
-            style={[styles.input, { flex: 1, marginTop: 0 }]}
-            autoCapitalize="characters"
-            editable={!promoApplied}
-          />
-          <Pressable
-            style={[styles.promoButton, promoApplied && styles.promoButtonDisabled]}
-            onPress={applyPromo}
-            disabled={promoApplied}
-          >
-            <Text style={styles.promoButtonText}>{promoApplied ? 'Applied' : 'Apply'}</Text>
-          </Pressable>
-        </View>
+        {promoCode.length > 0 && (
+          <>
+            <Text style={[typography.h3, { marginTop: spacing.lg }]}>Promo code</Text>
+            <View style={styles.promoRow}>
+              <TextInput
+                value={promoInput}
+                onChangeText={setPromoInput}
+                placeholder="Enter code"
+                placeholderTextColor={colors.inkMuted}
+                style={[styles.input, { flex: 1, marginTop: 0 }]}
+                autoCapitalize="characters"
+                editable={!promoApplied}
+              />
+              <Pressable
+                style={[styles.promoButton, promoApplied && styles.promoButtonDisabled]}
+                onPress={applyPromo}
+                disabled={promoApplied}
+              >
+                <Text style={styles.promoButtonText}>{promoApplied ? 'Applied' : 'Apply'}</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
 
         <Text style={[typography.h3, { marginTop: spacing.lg }]}>Order summary</Text>
         <View style={styles.summaryCard}>
@@ -237,6 +239,7 @@ export default function CheckoutScreen() {
               <Text style={typography.bodyMuted}>
                 {line.quantity} × {line.item.name}
                 {line.selectedProtein ? ` (${line.selectedProtein})` : ''}
+                {line.riceScoops && line.riceScoops !== 1 ? ` · ${line.riceScoops} scoops rice` : ''}
               </Text>
               <Text style={typography.body}>{formatPrice(lineUnitPrice(line) * line.quantity)}</Text>
             </View>
@@ -247,7 +250,7 @@ export default function CheckoutScreen() {
           </View>
           {promoApplied && (
             <View style={styles.summaryRow}>
-              <Text style={[typography.bodyMuted, { color: colors.forest }]}>Promo (WORLD10)</Text>
+              <Text style={[typography.bodyMuted, { color: colors.forest }]}>Promo ({promoCode})</Text>
               <Text style={[typography.body, { color: colors.forest }]}>-{formatPrice(discount)}</Text>
             </View>
           )}

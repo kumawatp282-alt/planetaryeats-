@@ -30,7 +30,8 @@ export default function CartScreen() {
           const addOnNames = (line.item.addOns ?? [])
             .filter((addOn) => line.selectedAddOnIds.includes(addOn.id))
             .map((addOn) => addOn.name);
-          const customization = [line.selectedProtein, ...addOnNames].filter(Boolean).join(' · ');
+          const riceLabel = line.riceScoops && line.riceScoops !== 1 ? `${line.riceScoops} scoops rice` : null;
+          const customization = [line.selectedProtein, riceLabel, ...addOnNames].filter(Boolean).join(' · ');
 
           return (
             <View style={styles.row}>

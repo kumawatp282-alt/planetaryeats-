@@ -65,6 +65,7 @@ export default function ReceiptView({ order, customerEmail }: Props) {
             <Text style={styles.lineText}>
               {line.quantity} × {line.item.name}
               {line.selectedProtein ? ` (${line.selectedProtein})` : ''}
+              {line.riceScoops && line.riceScoops !== 1 ? ` · ${line.riceScoops} scoops rice` : ''}
             </Text>
             <Text style={styles.lineText}>{formatPrice(lineUnitPrice(line) * line.quantity)}</Text>
           </View>

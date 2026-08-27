@@ -36,8 +36,8 @@ const CanvasEl = 'canvas' as unknown as React.ComponentType<
 >;
 
 interface Star {
-  left: string;
-  top: string;
+  left: `${number}%`;
+  top: `${number}%`;
   size: number;
   opacity: number;
   duration: number;
@@ -90,6 +90,11 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const markerRefs = useRef<Record<string, View | null>>({});
+  // Cursor-hover zoom on pins — read/written every frame in the imperative
+  // animate() loop below, so this stays a ref (a pin popping shouldn't
+  // trigger a React re-render 60x/sec).
+  const hoveredIdRef = useRef<string | null>(null);
+  const hoverScaleRef = useRef<Record<string, number>>({});
   const stars = useStarfield(50);
   useTwinkleKeyframes();
 
@@ -129,7 +134,15 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     // time this fires the splash screen has already preloaded the same URI.
     loader.load(uri, (loadedTexture) => {
       if ('colorSpace' in loadedTexture) (loadedTexture as any).colorSpace = (THREE as any).SRGBColorSpace;
-      loadedTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      // Mipmapping blurs texels across the UV seam at the antimeridian
+      // (u=0/u=1), which shows up as a thin visible line running pole to
+      // pole. Turning mipmaps off removes that sampling artifact — at this
+      // globe's on-screen size the minification cost is not noticeable.
+      loadedTexture.generateMipmaps = false;
+      loadedTexture.minFilter = THREE.LinearFilter;
+      loadedTexture.magFilter = THREE.LinearFilter;
+      loadedTexture.wrapS = THREE.ClampToEdgeWrapping;
+      loadedTexture.wrapT = THREE.ClampToEdgeWrapping;
       material.map = loadedTexture;
       material.color.set(0xffffff);
       material.needsUpdate = true;
@@ -229,11 +242,19 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const screenX = (projected.x * 0.5 + 0.5) * globeSize;
         const screenY = (1 - (projected.y * 0.5 + 0.5)) * globeSize;
         const opacity = facing ? 0.4 + depth * 0.6 : 0;
-        const scale = (0.6 + depth * 0.5) * pulse;
+
+        // Ease this pin's hover scale toward 1.5x when hovered, 1x
+        // otherwise — a spring-like pop rather than an instant snap.
+        const hoverTarget = hoveredIdRef.current === item.id ? 1.5 : 1;
+        const currentHover = hoverScaleRef.current[item.id] ?? 1;
+        const nextHover = currentHover + (hoverTarget - currentHover) * 0.25;
+        hoverScaleRef.current[item.id] = nextHover;
+
+        const scale = (0.6 + depth * 0.5) * pulse * nextHover;
         el.style.transform = `translate(${screenX}px, ${screenY}px) translate(-50%, -50%) scale(${scale})`;
         el.style.opacity = String(opacity);
         el.style.pointerEvents = facing ? 'auto' : 'none';
-        el.style.zIndex = String(Math.round(depth * 1000));
+        el.style.zIndex = String(Math.round(depth * 1000) + (hoveredIdRef.current === item.id ? 2000 : 0));
       });
 
       renderer.render(scene, camera);
@@ -367,11 +388,31 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
               />
 
               {item.dishImage ? (
-                <Pressable onPress={() => setActiveBowlId(item.id)} style={styles.dishPin} hitSlop={12}>
+                <Pressable
+                  onPress={() => setActiveBowlId(item.id)}
+                  onHoverIn={() => {
+                    hoveredIdRef.current = item.id;
+                  }}
+                  onHoverOut={() => {
+                    if (hoveredIdRef.current === item.id) hoveredIdRef.current = null;
+                  }}
+                  style={styles.dishPin}
+                  hitSlop={12}
+                >
                   <Image source={item.dishImage} style={styles.dishPinImage} resizeMode="cover" />
                 </Pressable>
               ) : (
-                <Pressable onPress={() => setActiveBowlId(item.id)} style={styles.dot} hitSlop={12} />
+                <Pressable
+                  onPress={() => setActiveBowlId(item.id)}
+                  onHoverIn={() => {
+                    hoveredIdRef.current = item.id;
+                  }}
+                  onHoverOut={() => {
+                    if (hoveredIdRef.current === item.id) hoveredIdRef.current = null;
+                  }}
+                  style={styles.dot}
+                  hitSlop={12}
+                />
               )}
 
               {/* Flag badge — so you know which country this is without

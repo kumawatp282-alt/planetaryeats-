@@ -32,6 +32,7 @@ export interface CartLine {
   quantity: number;
   selectedProtein?: string;
   selectedAddOnIds: string[];
+  riceScoops?: number; // "build your bowl" base portion, 1-3 — a preference, not priced
 }
 
 export type OrderStatus = 'placed' | 'preparing' | 'out_for_delivery' | 'delivered';
@@ -91,6 +92,8 @@ export interface AppSettings {
   closedPostcodes: string[];
   openingHours: OpeningHours;
   minimumOrderValue: number;
+  promoCode: string; // '' disables the promo code field entirely
+  promoDiscount: number; // fraction, e.g. 0.1 = 10% off
 }
 
 export interface AdminProfile {
@@ -144,6 +147,8 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   closedPostcodes: [],
   openingHours: DEFAULT_OPENING_HOURS,
   minimumOrderValue: 0,
+  promoCode: 'WORLD10',
+  promoDiscount: 0.1,
 };
 
 interface StoreState {
@@ -159,7 +164,14 @@ interface StoreState {
 }
 
 type StoreAction =
-  | { type: 'ADD_TO_CART'; item: MenuItem; quantity: number; selectedProtein?: string; selectedAddOnIds: string[] }
+  | {
+      type: 'ADD_TO_CART';
+      item: MenuItem;
+      quantity: number;
+      selectedProtein?: string;
+      selectedAddOnIds: string[];
+      riceScoops?: number;
+    }
   | { type: 'UPDATE_QUANTITY'; lineId: string; quantity: number }
   | { type: 'REMOVE_FROM_CART'; lineId: string }
   | { type: 'CLEAR_CART' }
@@ -198,8 +210,13 @@ const STATUS_SEQUENCE: OrderStatus[] = ['placed', 'preparing', 'out_for_delivery
 // Two lines are "the same" if they're the same item with the same
 // customization — that's what should merge quantities instead of creating
 // a second line.
-function lineKey(itemId: string, selectedProtein: string | undefined, selectedAddOnIds: string[]): string {
-  return [itemId, selectedProtein ?? '', [...selectedAddOnIds].sort().join(',')].join('|');
+function lineKey(
+  itemId: string,
+  selectedProtein: string | undefined,
+  selectedAddOnIds: string[],
+  riceScoops: number | undefined
+): string {
+  return [itemId, selectedProtein ?? '', [...selectedAddOnIds].sort().join(','), riceScoops ?? ''].join('|');
 }
 
 export function lineUnitPrice(line: Pick<CartLine, 'item' | 'selectedAddOnIds'>): number {
@@ -216,9 +233,9 @@ function cartTotal(lines: CartLine[]): number {
 function storeReducer(state: StoreState, action: StoreAction): StoreState {
   switch (action.type) {
     case 'ADD_TO_CART': {
-      const key = lineKey(action.item.id, action.selectedProtein, action.selectedAddOnIds);
+      const key = lineKey(action.item.id, action.selectedProtein, action.selectedAddOnIds, action.riceScoops);
       const existing = state.cart.find(
-        (line) => lineKey(line.item.id, line.selectedProtein, line.selectedAddOnIds) === key
+        (line) => lineKey(line.item.id, line.selectedProtein, line.selectedAddOnIds, line.riceScoops) === key
       );
       const cart = existing
         ? state.cart.map((line) =>
@@ -232,6 +249,7 @@ function storeReducer(state: StoreState, action: StoreAction): StoreState {
               quantity: action.quantity,
               selectedProtein: action.selectedProtein,
               selectedAddOnIds: action.selectedAddOnIds,
+              riceScoops: action.riceScoops,
             },
           ];
       return { ...state, cart };
@@ -280,7 +298,13 @@ function storeReducer(state: StoreState, action: StoreAction): StoreState {
 }
 
 interface StoreContextValue extends StoreState {
-  addToCart: (item: MenuItem, quantity?: number, selectedProtein?: string, selectedAddOnIds?: string[]) => void;
+  addToCart: (
+    item: MenuItem,
+    quantity?: number,
+    selectedProtein?: string,
+    selectedAddOnIds?: string[],
+    riceScoops?: number
+  ) => void;
   updateQuantity: (lineId: string, quantity: number) => void;
   removeFromCart: (lineId: string) => void;
   clearCart: () => void;
@@ -299,7 +323,13 @@ interface StoreContextValue extends StoreState {
     changes: Partial<
       Pick<
         AppSettings,
-        'deliveryRadiusKm' | 'closedPostcodes' | 'restaurantName' | 'openingHours' | 'minimumOrderValue'
+        | 'deliveryRadiusKm'
+        | 'closedPostcodes'
+        | 'restaurantName'
+        | 'openingHours'
+        | 'minimumOrderValue'
+        | 'promoCode'
+        | 'promoDiscount'
       >
     >
   ) => Promise<{ error: string | null }>;
@@ -453,6 +483,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             closedPostcodes: data.closed_postcodes ?? [],
             openingHours: data.opening_hours ?? DEFAULT_OPENING_HOURS,
             minimumOrderValue: Number(data.minimum_order_value ?? 0),
+            promoCode: data.promo_code ?? 'WORLD10',
+            promoDiscount: Number(data.promo_discount ?? 0.1),
           },
         });
       });
@@ -497,8 +529,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<StoreContextValue>(() => {
     return {
       ...state,
-      addToCart: (item, quantity = 1, selectedProtein, selectedAddOnIds = []) =>
-        dispatch({ type: 'ADD_TO_CART', item, quantity, selectedProtein, selectedAddOnIds }),
+      addToCart: (item, quantity = 1, selectedProtein, selectedAddOnIds = [], riceScoops) =>
+        dispatch({ type: 'ADD_TO_CART', item, quantity, selectedProtein, selectedAddOnIds, riceScoops }),
       updateQuantity: (lineId, quantity) => dispatch({ type: 'UPDATE_QUANTITY', lineId, quantity }),
       removeFromCart: (lineId) => dispatch({ type: 'REMOVE_FROM_CART', lineId }),
       clearCart: () => dispatch({ type: 'CLEAR_CART' }),
@@ -591,6 +623,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (changes.restaurantName !== undefined) payload.restaurant_name = changes.restaurantName;
         if (changes.openingHours !== undefined) payload.opening_hours = changes.openingHours;
         if (changes.minimumOrderValue !== undefined) payload.minimum_order_value = changes.minimumOrderValue;
+        if (changes.promoCode !== undefined) payload.promo_code = changes.promoCode;
+        if (changes.promoDiscount !== undefined) payload.promo_discount = changes.promoDiscount;
         const { error } = await supabase.from('app_settings').update(payload).eq('id', 1);
         if (error) return { error: error.message };
         dispatch({ type: 'SET_APP_SETTINGS', settings: { ...state.appSettings, ...changes } });

@@ -1,11 +1,84 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getMenuItem, MenuItem } from '../../data/menu';
 import { useStore } from '../../context/StoreContext';
 import QuantityStepper from '../../components/QuantityStepper';
 import { colors, radii, spacing, typography } from '../../constants/theme';
 import { formatPrice } from '../../lib/format';
+
+const MAX_RICE_SCOOPS = 3;
+
+// A little spring pop — used for every "build your bowl" section so
+// picking a base, protein or add-on all feel the same satisfying way.
+function usePopAnimation(dep: unknown) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const didMount = useRef(false);
+  useEffect(() => {
+    if (!didMount.current) {
+      didMount.current = true;
+      return;
+    }
+    scale.setValue(0.85);
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 14 }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dep]);
+  return scale;
+}
+
+function BowlBaseSection({ scoops, onChange }: { scoops: number; onChange: (n: number) => void }) {
+  const scale = usePopAnimation(scoops);
+  return (
+    <View style={styles.section}>
+      <Text style={typography.label}>YOUR BASE</Text>
+      <View style={styles.baseRow}>
+        <Animated.Text style={[styles.baseEmoji, { transform: [{ scale }] }]}>{'🍚'.repeat(scoops)}</Animated.Text>
+        <View style={{ flex: 1 }}>
+          <Text style={typography.body}>Rice</Text>
+          <Text style={typography.bodyMuted}>{scoops} scoop{scoops > 1 ? 's' : ''}</Text>
+        </View>
+        <QuantityStepper
+          quantity={scoops}
+          min={1}
+          onIncrease={() => onChange(Math.min(MAX_RICE_SCOOPS, scoops + 1))}
+          onDecrease={() => onChange(Math.max(1, scoops - 1))}
+        />
+      </View>
+    </View>
+  );
+}
+
+function AnimatedProteinPill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const scale = usePopAnimation(active);
+  return (
+    <Animated.View style={{ transform: [{ scale: active ? scale : 1 }] }}>
+      <Pressable style={[styles.optionPill, active && styles.optionPillActive]} onPress={onPress}>
+        <Text style={[styles.optionText, active && styles.optionTextActive]}>{label}</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function AnimatedAddOnRow({
+  addOn,
+  active,
+  onPress,
+}: {
+  addOn: { id: string; name: string; price: number };
+  active: boolean;
+  onPress: () => void;
+}) {
+  const scale = usePopAnimation(active);
+  return (
+    <Pressable style={styles.addOnRow} onPress={onPress}>
+      <Animated.View style={[styles.checkbox, active && styles.checkboxActive, { transform: [{ scale: active ? scale : 1 }] }]}>
+        {active && <Text style={styles.checkboxMark}>✓</Text>}
+      </Animated.View>
+      <Text style={[typography.body, styles.addOnName]}>{addOn.name}</Text>
+      <Text style={typography.bodyMuted}>+{formatPrice(addOn.price)}</Text>
+    </Pressable>
+  );
+}
 
 export default function ItemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -17,6 +90,7 @@ export default function ItemDetailScreen() {
 
   const [selectedProtein, setSelectedProtein] = useState<string | undefined>(undefined);
   const [selectedAddOnIds, setSelectedAddOnIds] = useState<string[]>([]);
+  const [riceScoops, setRiceScoops] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -25,6 +99,7 @@ export default function ItemDetailScreen() {
       if (cancelled) return;
       setItem(result ?? null);
       setSelectedProtein(result?.proteinOptions?.[0]);
+      setRiceScoops(1);
       setLoading(false);
     });
     return () => {
@@ -63,7 +138,8 @@ export default function ItemDetailScreen() {
   };
 
   const handleAdd = () => {
-    addToCart(item, quantity, selectedProtein, selectedAddOnIds);
+    const hasBase = Boolean(item.proteinOptions && item.proteinOptions.length > 0);
+    addToCart(item, quantity, selectedProtein, selectedAddOnIds, hasBase ? riceScoops : undefined);
     router.back();
   };
 
@@ -92,21 +168,21 @@ export default function ItemDetailScreen() {
         )}
 
         {item.proteinOptions && item.proteinOptions.length > 0 && (
+          <BowlBaseSection scoops={riceScoops} onChange={setRiceScoops} />
+        )}
+
+        {item.proteinOptions && item.proteinOptions.length > 0 && (
           <View style={styles.section}>
             <Text style={typography.label}>CHOOSE YOUR PROTEIN</Text>
             <View style={styles.optionRow}>
-              {item.proteinOptions.map((protein) => {
-                const active = selectedProtein === protein;
-                return (
-                  <Pressable
-                    key={protein}
-                    style={[styles.optionPill, active && styles.optionPillActive]}
-                    onPress={() => setSelectedProtein(protein)}
-                  >
-                    <Text style={[styles.optionText, active && styles.optionTextActive]}>{protein}</Text>
-                  </Pressable>
-                );
-              })}
+              {item.proteinOptions.map((protein) => (
+                <AnimatedProteinPill
+                  key={protein}
+                  label={protein}
+                  active={selectedProtein === protein}
+                  onPress={() => setSelectedProtein(protein)}
+                />
+              ))}
             </View>
           </View>
         )}
@@ -115,18 +191,14 @@ export default function ItemDetailScreen() {
           <View style={styles.section}>
             <Text style={typography.label}>MAKE IT YOURS</Text>
             <View style={styles.addOnList}>
-              {item.addOns.map((addOn) => {
-                const active = selectedAddOnIds.includes(addOn.id);
-                return (
-                  <Pressable key={addOn.id} style={styles.addOnRow} onPress={() => toggleAddOn(addOn.id)}>
-                    <View style={[styles.checkbox, active && styles.checkboxActive]}>
-                      {active && <Text style={styles.checkboxMark}>✓</Text>}
-                    </View>
-                    <Text style={[typography.body, styles.addOnName]}>{addOn.name}</Text>
-                    <Text style={typography.bodyMuted}>+{formatPrice(addOn.price)}</Text>
-                  </Pressable>
-                );
-              })}
+              {item.addOns.map((addOn) => (
+                <AnimatedAddOnRow
+                  key={addOn.id}
+                  addOn={addOn}
+                  active={selectedAddOnIds.includes(addOn.id)}
+                  onPress={() => toggleAddOn(addOn.id)}
+                />
+              ))}
             </View>
           </View>
         )}
@@ -267,6 +339,21 @@ const styles = StyleSheet.create({
   section: {
     width: '100%',
     marginTop: spacing.lg,
+  },
+  baseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  baseEmoji: {
+    fontSize: 26,
   },
   optionRow: {
     flexDirection: 'row',
