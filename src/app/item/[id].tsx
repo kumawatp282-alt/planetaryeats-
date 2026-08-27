@@ -424,9 +424,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   allergenChip: {
-    backgroundColor: 'rgba(182,85,64,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(182,85,64,0.3)',
+    borderColor: 'rgba(0,0,0,0.25)',
     borderRadius: radii.pill,
     paddingVertical: 4,
     paddingHorizontal: spacing.sm,
@@ -463,9 +463,9 @@ const styles = StyleSheet.create({
   promiseCard: {
     width: '100%',
     marginTop: spacing.lg,
-    backgroundColor: 'rgba(43,168,144,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.04)',
     borderWidth: 1,
-    borderColor: 'rgba(43,168,144,0.3)',
+    borderColor: 'rgba(0,0,0,0.15)',
     borderRadius: radii.md,
     padding: spacing.md,
   },

@@ -44,9 +44,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   conceptBanner: {
-    backgroundColor: 'rgba(232,163,61,0.12)',
+    backgroundColor: 'rgba(0,0,0,0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(232,163,61,0.35)',
+    borderColor: 'rgba(0,0,0,0.15)',
     borderRadius: radii.md,
     padding: spacing.md,
     marginBottom: spacing.lg,

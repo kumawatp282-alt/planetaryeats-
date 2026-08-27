@@ -526,7 +526,7 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved }:
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(20,16,10,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: spacing.md,

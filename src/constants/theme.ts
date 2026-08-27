@@ -1,25 +1,27 @@
 // Planetary Eats — shared design tokens.
-// Warm, organic wellness palette: cream and sage instead of dark sci-fi
-// space tones. Every screen pulls from here so a rebrand only touches this
-// one file.
+// Monochrome palette: black, white and gray everywhere in the app UI. The
+// only place color survives is the 3D globe itself (real photo textures,
+// atmosphere glow) — that's a deliberate exception, not an oversight. Every
+// screen pulls from here so a rebrand only touches this one file.
 
 export const colors = {
   // Core brand
-  forest: '#3F6B4C', // primary — warm sage-forest (CTAs, price tags, active states)
-  leaf: '#6B9C74', // secondary, lighter sage
-  sun: '#DFA24E', // accent — warm gold (badges, highlights)
-  clay: '#C1694A', // secondary accent — terracotta
+  forest: '#1A1A1A', // primary — near-black (CTAs, price tags, active states)
+  leaf: '#4D4D4D', // secondary, mid gray
+  sun: '#404040', // accent (badges, highlights)
+  clay: '#595959', // secondary accent
 
   // Neutrals
-  cream: '#FAF3E6', // app background — warm cream, not stark white or dark
-  card: '#FFFDF8',
-  ink: '#2E2A22', // primary text — warm near-black
-  inkMuted: '#7C7466', // secondary text — warm gray-brown
-  border: '#E7DCC8',
+  cream: '#FFFFFF', // app background — plain white
+  card: '#F3F3F3',
+  ink: '#111111', // primary text — near-black
+  inkMuted: '#6B6B6B', // secondary text — gray
+  border: '#E0E0E0',
 
-  // Status
-  success: '#3F6B4C',
-  danger: '#B65540',
+  // Status — distinguished by lightness only, no hue. Both are dark enough
+  // to keep white button-text and text-on-white readable at AA contrast.
+  success: '#1F1F1F',
+  danger: '#666666',
 
   // Convenience
   white: '#FFFFFF',

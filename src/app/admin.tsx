@@ -1149,9 +1149,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.leaf,
   },
   privateBanner: {
-    backgroundColor: 'rgba(63,107,76,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(63,107,76,0.3)',
+    borderColor: 'rgba(0,0,0,0.2)',
     borderRadius: radii.md,
     padding: spacing.md,
     marginBottom: spacing.md,

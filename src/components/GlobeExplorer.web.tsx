@@ -304,9 +304,9 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           bottom: 0,
           // @ts-expect-error web-only CSS background not in RN's style typings
           background:
-            'radial-gradient(ellipse 65% 50% at 20% 10%, rgba(107,156,116,0.16), transparent 62%),' +
-            'radial-gradient(ellipse 55% 45% at 85% 80%, rgba(223,162,78,0.18), transparent 60%),' +
-            'radial-gradient(ellipse 60% 55% at 70% 20%, rgba(193,105,74,0.10), transparent 65%)',
+            'radial-gradient(ellipse 65% 50% at 20% 10%, rgba(0,0,0,0.05), transparent 62%),' +
+            'radial-gradient(ellipse 55% 45% at 85% 80%, rgba(0,0,0,0.06), transparent 60%),' +
+            'radial-gradient(ellipse 60% 55% at 70% 20%, rgba(0,0,0,0.04), transparent 65%)',
         }}
       />
       {stars.map((star, i) => (
@@ -496,7 +496,7 @@ const styles = {
     borderColor: colors.sun,
     overflow: 'hidden' as const,
     backgroundColor: colors.card,
-    shadowColor: '#3A2E1E',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
@@ -529,7 +529,7 @@ const styles = {
     borderColor: colors.card,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
-    shadowColor: '#3A2E1E',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.3,
     shadowRadius: 2,

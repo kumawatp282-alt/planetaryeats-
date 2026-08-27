@@ -56,9 +56,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   disclaimer: {
-    backgroundColor: 'rgba(182,85,64,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(182,85,64,0.3)',
+    borderColor: 'rgba(0,0,0,0.25)',
     borderRadius: radii.md,
     padding: spacing.md,
     marginBottom: spacing.lg,

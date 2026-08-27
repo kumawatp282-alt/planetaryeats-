@@ -68,7 +68,7 @@ export default function NavMenu({ visible, onClose }: Props) {
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(20,16,10,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'flex-end',
   },
   panel: {
@@ -80,7 +80,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: spacing.xs,
-    shadowColor: '#3A2E1E',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.15,
     shadowRadius: 16,
