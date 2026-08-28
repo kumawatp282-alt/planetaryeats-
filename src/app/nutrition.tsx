@@ -2,25 +2,12 @@
 // Planetary Eats automatically, and lets them log anything else they ate
 // so the day's total is actually complete. Entirely private to the
 // signed-in user (RLS-scoped) — the business never sees this data.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { NutritionEntry, NutritionGoals, useStore } from '../context/StoreContext';
+import { NutritionGoals, useStore, useTodayNutrition } from '../context/StoreContext';
 import AuthForm from '../components/AuthForm';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
-
-function todayIso(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
-interface Totals {
-  calories: number;
-  protein: number;
-  fiber: number;
-}
 
 function ProgressBar({ value, goal, color }: { value: number; goal: number | null; color: string }) {
   if (!goal || goal <= 0) return null;
@@ -34,17 +21,10 @@ function ProgressBar({ value, goal, color }: { value: number; goal: number | nul
 
 export default function NutritionScreen() {
   const { user, loading: authLoading } = useAuth();
-  const {
-    orders,
-    fetchNutritionLog,
-    addNutritionEntry,
-    deleteNutritionEntry,
-    fetchNutritionGoals,
-    updateNutritionGoals,
-  } = useStore();
+  const { addNutritionEntry, deleteNutritionEntry, updateNutritionGoals } = useStore();
+  const { iso, loading: nutritionLoading, entries, goals, orderTotals, totalToday: total, refresh } =
+    useTodayNutrition();
 
-  const [entries, setEntries] = useState<NutritionEntry[] | null>(null);
-  const [goals, setGoals] = useState<NutritionGoals>({ calories: null, protein: null });
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalCalories, setGoalCalories] = useState('');
   const [goalProtein, setGoalProtein] = useState('');
@@ -56,61 +36,10 @@ export default function NutritionScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const iso = todayIso();
-
-  const load = () => {
-    fetchNutritionLog(iso).then(setEntries);
-  };
-
   useEffect(() => {
-    if (!user) return;
-    load();
-    fetchNutritionGoals().then((g) => {
-      setGoals(g);
-      setGoalCalories(g.calories ? String(g.calories) : '');
-      setGoalProtein(g.protein ? String(g.protein) : '');
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, iso]);
-
-  // Today's Planetary Eats orders, counted automatically.
-  const orderTotals: Totals = useMemo(() => {
-    const todayLabel = new Date().toDateString();
-    return orders
-      .filter((o) => new Date(o.placedAt).toDateString() === todayLabel)
-      .reduce(
-        (acc, order) => {
-          order.lines.forEach((line) => {
-            const n = line.item.nutrition;
-            if (!n) return;
-            acc.calories += n.calories * line.quantity;
-            acc.protein += n.protein * line.quantity;
-            acc.fiber += n.fiber * line.quantity;
-          });
-          return acc;
-        },
-        { calories: 0, protein: 0, fiber: 0 }
-      );
-  }, [orders]);
-
-  const loggedTotals: Totals = useMemo(
-    () =>
-      (entries ?? []).reduce(
-        (acc, e) => ({
-          calories: acc.calories + e.calories,
-          protein: acc.protein + e.protein,
-          fiber: acc.fiber + e.fiber,
-        }),
-        { calories: 0, protein: 0, fiber: 0 }
-      ),
-    [entries]
-  );
-
-  const total: Totals = {
-    calories: orderTotals.calories + loggedTotals.calories,
-    protein: orderTotals.protein + loggedTotals.protein,
-    fiber: orderTotals.fiber + loggedTotals.fiber,
-  };
+    setGoalCalories(goals.calories ? String(goals.calories) : '');
+    setGoalProtein(goals.protein ? String(goals.protein) : '');
+  }, [goals]);
 
   const addEntry = async () => {
     const trimmed = label.trim();
@@ -136,12 +65,12 @@ export default function NutritionScreen() {
     setCalories('');
     setProtein('');
     setFiber('');
-    load();
+    refresh();
   };
 
   const removeEntry = async (id: string) => {
     await deleteNutritionEntry(id);
-    load();
+    refresh();
   };
 
   const saveGoals = async () => {
@@ -157,7 +86,7 @@ export default function NutritionScreen() {
       return;
     }
     await updateNutritionGoals(nextGoals);
-    setGoals(nextGoals);
+    refresh();
     setShowGoalForm(false);
   };
 
@@ -258,7 +187,7 @@ export default function NutritionScreen() {
       </View>
 
       <Text style={[typography.label, { marginTop: spacing.lg }]}>ANYTHING ELSE YOU ATE</Text>
-      {entries === null ? (
+      {nutritionLoading ? (
         <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.md }} />
       ) : (
         <View style={styles.card}>

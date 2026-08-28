@@ -3,7 +3,7 @@
 // in-progress cart server-side. Orders are real rows tied to the signed-in
 // user; placing one requires being logged in (enforced in checkout.tsx).
 
-import React, { createContext, useContext, useEffect, useMemo, useReducer } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useState } from 'react';
 import { AddOn, MenuItem, Nutrition, Origin, rowToMenuItem } from '../data/menu';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
@@ -906,4 +906,101 @@ export function useStore(): StoreContextValue {
   const ctx = useContext(StoreContext);
   if (!ctx) throw new Error('useStore must be used within a StoreProvider');
   return ctx;
+}
+
+export function todayIso(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+interface DayTotals {
+  calories: number;
+  protein: number;
+  fiber: number;
+}
+
+const ZERO_TOTALS: DayTotals = { calories: 0, protein: 0, fiber: 0 };
+
+// Today's intake, in one place, so anywhere in the app that wants to say
+// "here's how this fits your day" (the item page, a glance on the globe
+// popup, the /nutrition screen itself) reads it the same way instead of
+// re-deriving it. remaining* is null whenever there's nothing to compare
+// against — signed out, or signed in but no goal set — callers treat that
+// as "nothing to say" rather than a zero.
+export function useTodayNutrition() {
+  const { user } = useAuth();
+  const { orders, fetchNutritionLog, fetchNutritionGoals } = useStore();
+  const [entries, setEntries] = useState<NutritionEntry[] | null>(null);
+  const [goals, setGoals] = useState<NutritionGoals>({ calories: null, protein: null });
+  const [loading, setLoading] = useState(true);
+  const iso = todayIso();
+
+  const refresh = () => {
+    if (!user) {
+      setEntries([]);
+      setGoals({ calories: null, protein: null });
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    Promise.all([fetchNutritionLog(iso), fetchNutritionGoals()]).then(([log, g]) => {
+      setEntries(log);
+      setGoals(g);
+      setLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, iso]);
+
+  const orderTotals = useMemo<DayTotals>(() => {
+    const todayLabel = new Date().toDateString();
+    return orders
+      .filter((o) => new Date(o.placedAt).toDateString() === todayLabel)
+      .reduce((acc, order) => {
+        order.lines.forEach((line) => {
+          const n = line.item.nutrition;
+          if (!n) return;
+          acc.calories += n.calories * line.quantity;
+          acc.protein += n.protein * line.quantity;
+          acc.fiber += n.fiber * line.quantity;
+        });
+        return acc;
+      }, { ...ZERO_TOTALS });
+  }, [orders]);
+
+  const loggedTotals = useMemo<DayTotals>(
+    () =>
+      (entries ?? []).reduce(
+        (acc, e) => ({
+          calories: acc.calories + e.calories,
+          protein: acc.protein + e.protein,
+          fiber: acc.fiber + e.fiber,
+        }),
+        { ...ZERO_TOTALS }
+      ),
+    [entries]
+  );
+
+  const totalToday: DayTotals = {
+    calories: orderTotals.calories + loggedTotals.calories,
+    protein: orderTotals.protein + loggedTotals.protein,
+    fiber: orderTotals.fiber + loggedTotals.fiber,
+  };
+
+  return {
+    iso,
+    loading,
+    entries: entries ?? [],
+    goals,
+    orderTotals,
+    totalToday,
+    remainingCalories: goals.calories !== null ? goals.calories - totalToday.calories : null,
+    remainingProtein: goals.protein !== null ? goals.protein - totalToday.protein : null,
+    refresh,
+  };
 }

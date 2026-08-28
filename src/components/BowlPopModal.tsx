@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Image, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { MenuItem } from '../data/menu';
+import { useTodayNutrition } from '../context/StoreContext';
 import { colors, fonts, spacing } from '../constants/theme';
 import { formatPrice } from '../lib/format';
 
@@ -23,6 +24,7 @@ const WHEEL_SWIPE_THRESHOLD = 40;
 const WHEEL_LOCK_MS = 450;
 
 export default function BowlPopModal({ items, allItems, activeId, size, onClose, onViewBowl }: Props) {
+  const { remainingCalories } = useTodayNutrition();
   const [index, setIndex] = useState(0);
   const [siblingId, setSiblingId] = useState<string | null>(null);
   const scale = useRef(new Animated.Value(0.6)).current;
@@ -161,6 +163,13 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
 
       <Text style={styles.name}>{item.name}</Text>
       <Text style={styles.price}>{formatPrice(item.price)}</Text>
+      {item.nutrition && remainingCalories !== null && (
+        <Text style={styles.fitText}>
+          {remainingCalories >= item.nutrition.calories
+            ? '✓ Fits today’s goal'
+            : `⚠ ${Math.round(item.nutrition.calories - remainingCalories)} kcal over today's goal`}
+        </Text>
+      )}
       <Text style={styles.hint}>Tap the bowl to view · swipe for more</Text>
 
       <View style={styles.dots}>
@@ -251,6 +260,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: colors.clay,
+  },
+  fitText: {
+    marginTop: 4,
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.inkMuted,
   },
   hint: {
     marginTop: spacing.sm,

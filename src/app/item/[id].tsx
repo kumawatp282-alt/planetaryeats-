@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getMenuItem, MenuItem } from '../../data/menu';
-import { useStore } from '../../context/StoreContext';
+import { useStore, useTodayNutrition } from '../../context/StoreContext';
 import QuantityStepper from '../../components/QuantityStepper';
 import { colors, radii, spacing, typography } from '../../constants/theme';
 import { formatPrice } from '../../lib/format';
@@ -84,6 +84,7 @@ export default function ItemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { addToCart } = useStore();
+  const { totalToday, remainingCalories, remainingProtein } = useTodayNutrition();
   const [quantity, setQuantity] = useState(1);
   const [item, setItem] = useState<MenuItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -252,6 +253,39 @@ export default function ItemDetailScreen() {
             <Text style={[typography.bodyMuted, { fontSize: 11, marginTop: spacing.xs }]}>
               Estimated for the default protein choice — not lab-verified.
             </Text>
+          </View>
+        )}
+
+        {item.nutrition && (
+          <View style={styles.section}>
+            <Text style={typography.label}>HOW THIS FITS YOUR DAY</Text>
+            {remainingCalories === null ? (
+              <>
+                <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>
+                  Track today's intake to see how this bowl fits your day before you order.
+                </Text>
+                <Pressable onPress={() => router.push('/nutrition')}>
+                  <Text style={styles.fitLink}>Open Today's Intake →</Text>
+                </Pressable>
+              </>
+            ) : (
+              <View style={styles.fitCard}>
+                <Text style={typography.body}>
+                  {remainingCalories >= item.nutrition.calories
+                    ? `Fits your day — about ${Math.round(remainingCalories - item.nutrition.calories)} kcal left after this.`
+                    : `About ${Math.round(item.nutrition.calories - remainingCalories)} kcal over your goal for today.`}
+                </Text>
+                {remainingProtein !== null && (
+                  <Text style={[typography.bodyMuted, { marginTop: 4 }]}>
+                    Adds {item.nutrition.protein}g protein — you'd be at{' '}
+                    {Math.round(totalToday.protein + item.nutrition.protein)}g toward your goal.
+                  </Text>
+                )}
+                <Text style={[typography.bodyMuted, { fontSize: 11, marginTop: 4 }]}>
+                  Based on {Math.round(totalToday.calories)} kcal already tracked today, as of now.
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -459,6 +493,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.inkMuted,
     marginTop: 2,
+  },
+  fitCard: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radii.md,
+    padding: spacing.md,
+  },
+  fitLink: {
+    marginTop: spacing.sm,
+    color: colors.leaf,
+    fontWeight: '700',
+    fontSize: 13,
   },
   promiseCard: {
     width: '100%',
