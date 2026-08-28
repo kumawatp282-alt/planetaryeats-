@@ -5,7 +5,7 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { AdminMenuItem, AdminProfile, InventoryItem, Order, useStore } from '../context/StoreContext';
+import { AdminMenuItem, AdminProfile, InventoryItem, InventoryMovement, Order, useStore } from '../context/StoreContext';
 import AuthForm from '../components/AuthForm';
 import ReceiptView from '../components/ReceiptView';
 import MenuItemEditorModal from '../components/MenuItemEditorModal';
@@ -413,8 +413,24 @@ function formatQty(n: number): string {
 
 const UNIT_PRESETS = ['kg', 'g', 'l', 'ml', 'pcs', 'pack'];
 
-function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () => void }) {
-  const { setInventoryStock, upsertInventoryItem, deleteInventoryItem } = useStore();
+const MOVEMENT_TYPES: InventoryMovement['type'][] = ['used', 'waste', 'restock'];
+const MOVEMENT_LABELS: Record<InventoryMovement['type'], string> = {
+  used: 'Used',
+  waste: 'Waste',
+  restock: 'Restock',
+};
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function InventoryRow({
+  item,
+  movements,
+  onChanged,
+}: {
+  item: InventoryItem;
+  movements: InventoryMovement[];
+  onChanged: () => void;
+}) {
+  const { setInventoryStock, upsertInventoryItem, deleteInventoryItem, logInventoryMovement } = useStore();
   const [stockDraft, setStockDraft] = useState(String(item.currentStock));
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -425,6 +441,11 @@ function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () 
   const [reorderThreshold, setReorderThreshold] = useState(String(item.reorderThreshold));
   const [notes, setNotes] = useState(item.notes ?? '');
   const [message, setMessage] = useState<string | null>(null);
+  const [logging, setLogging] = useState(false);
+  const [moveType, setMoveType] = useState<InventoryMovement['type']>('used');
+  const [moveQty, setMoveQty] = useState('');
+  const [moveNote, setMoveNote] = useState('');
+  const [moveMessage, setMoveMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setStockDraft(String(item.currentStock));
@@ -482,8 +503,36 @@ function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () 
     onChanged();
   };
 
+  const submitMovement = async () => {
+    const parsed = Number(moveQty);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setMoveMessage('Enter a quantity greater than 0.');
+      return;
+    }
+    setSaving(true);
+    setMoveMessage(null);
+    const { error } = await logInventoryMovement(item.id, moveType, parsed, item.currentStock, moveNote);
+    setSaving(false);
+    if (error) {
+      setMoveMessage(error);
+      return;
+    }
+    setMoveQty('');
+    setMoveNote('');
+    setLogging(false);
+    onChanged();
+  };
+
   const status: 'out' | 'low' | 'ok' =
     item.currentStock <= 0 ? 'out' : item.currentStock <= item.reorderThreshold ? 'low' : 'ok';
+
+  const now = Date.now();
+  const usedThisWeek = movements
+    .filter((m) => m.type === 'used' && now - new Date(m.createdAt).getTime() <= 7 * DAY_MS)
+    .reduce((sum, m) => sum + m.quantity, 0);
+  const wasteThisWeek = movements
+    .filter((m) => m.type === 'waste' && now - new Date(m.createdAt).getTime() <= 7 * DAY_MS)
+    .reduce((sum, m) => sum + m.quantity, 0);
 
   return (
     <View style={styles.rowCard}>
@@ -494,6 +543,13 @@ function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () 
             <Text style={typography.bodyMuted}>
               {item.category} · par {formatQty(item.parLevel)} {item.unit}
             </Text>
+            {(usedThisWeek > 0 || wasteThisWeek > 0) && (
+              <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
+                This week —{usedThisWeek > 0 ? ` used ${formatQty(usedThisWeek)} ${item.unit}` : ''}
+                {usedThisWeek > 0 && wasteThisWeek > 0 ? ' ·' : ''}
+                {wasteThisWeek > 0 ? ` wasted ${formatQty(wasteThisWeek)} ${item.unit}` : ''}
+              </Text>
+            )}
           </View>
           {status !== 'ok' && (
             <View style={styles.lowBadge}>
@@ -514,6 +570,9 @@ function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () 
         </View>
 
         <View style={{ flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm }}>
+          <Pressable style={styles.smallButton} onPress={() => setLogging(!logging)}>
+            <Text style={styles.smallButtonText}>{logging ? 'Close' : 'Log'}</Text>
+          </Pressable>
           <Pressable style={styles.smallButton} onPress={() => setEditing(!editing)}>
             <Text style={styles.smallButtonText}>{editing ? 'Close' : 'Edit'}</Text>
           </Pressable>
@@ -521,6 +580,39 @@ function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () 
             <Text style={styles.smallButtonText}>Delete</Text>
           </Pressable>
         </View>
+
+        {logging && (
+          <View style={{ marginTop: spacing.md }}>
+            <View style={styles.chipRow}>
+              {MOVEMENT_TYPES.map((t) => (
+                <Pressable key={t} style={[styles.chip, moveType === t && styles.chipActive]} onPress={() => setMoveType(t)}>
+                  <Text style={[styles.chipText, moveType === t && styles.chipTextActive]}>{MOVEMENT_LABELS[t]}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.inputRow}>
+              <TextInput
+                value={moveQty}
+                onChangeText={setMoveQty}
+                keyboardType="numeric"
+                style={[styles.input, { flex: 1, marginTop: 0 }]}
+                placeholder={`Amount in ${item.unit}`}
+                placeholderTextColor={colors.inkMuted}
+              />
+              <Pressable style={styles.smallButton} onPress={submitMovement} disabled={saving}>
+                <Text style={styles.smallButtonText}>{saving ? '…' : 'Log'}</Text>
+              </Pressable>
+            </View>
+            <TextInput
+              value={moveNote}
+              onChangeText={setMoveNote}
+              style={[styles.input, { marginTop: spacing.sm }]}
+              placeholder="Note (optional)"
+              placeholderTextColor={colors.inkMuted}
+            />
+            {moveMessage && <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>{moveMessage}</Text>}
+          </View>
+        )}
 
         {editing && (
           <View style={{ marginTop: spacing.md }}>
@@ -585,8 +677,9 @@ function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () 
 }
 
 function InventorySection() {
-  const { fetchInventoryItems, upsertInventoryItem } = useStore();
+  const { fetchInventoryItems, fetchInventoryMovements, upsertInventoryItem } = useStore();
   const [items, setItems] = useState<InventoryItem[] | null>(null);
+  const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [name, setName] = useState('');
   const [category, setCategory] = useState('');
@@ -600,6 +693,7 @@ function InventorySection() {
 
   const load = () => {
     fetchInventoryItems().then(setItems);
+    fetchInventoryMovements().then(setMovements);
   };
 
   useEffect(() => {
@@ -665,6 +759,27 @@ function InventorySection() {
       (a, b) => a.item.currentStock - a.item.reorderThreshold - (b.item.currentStock - b.item.reorderThreshold)
     );
 
+  const movementsByItem = new Map<string, InventoryMovement[]>();
+  movements.forEach((m) => {
+    const list = movementsByItem.get(m.itemId) ?? [];
+    list.push(m);
+    movementsByItem.set(m.itemId, list);
+  });
+
+  // Trailing-4-week average of used+waste, projected against what's
+  // currently on hand — restocks don't count toward "how much you'll use".
+  const now = Date.now();
+  const nextWeekEstimate = items
+    .map((item) => {
+      const last28Days = (movementsByItem.get(item.id) ?? []).filter(
+        (m) => (m.type === 'used' || m.type === 'waste') && now - new Date(m.createdAt).getTime() <= 28 * DAY_MS
+      );
+      const avgWeekly = last28Days.reduce((sum, m) => sum + m.quantity, 0) / 4;
+      return { item, avgWeekly, shortfall: Math.max(avgWeekly - item.currentStock, 0) };
+    })
+    .filter((r) => r.avgWeekly > 0 && r.shortfall > 0)
+    .sort((a, b) => b.shortfall - a.shortfall);
+
   const existingCategories = Array.from(new Set(items.map((i) => i.category))).sort();
   const grouped = new Map<string, InventoryItem[]>();
   items.forEach((i) => {
@@ -697,6 +812,28 @@ function InventorySection() {
             </View>
             <Text style={styles.restockAmount}>
               +{formatQty(suggested)} {item.unit}
+            </Text>
+          </View>
+        ))
+      )}
+
+      <Text style={[typography.label, { marginTop: spacing.lg }]}>NEXT WEEK'S ESTIMATE</Text>
+      <Text style={typography.bodyMuted}>Based on the last 4 weeks of logged usage and waste.</Text>
+      {nextWeekEstimate.length === 0 ? (
+        <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>
+          Not enough usage history yet — log usage or waste on an ingredient below to start seeing estimates here.
+        </Text>
+      ) : (
+        nextWeekEstimate.map(({ item, avgWeekly, shortfall }) => (
+          <View key={item.id} style={styles.statRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={typography.body}>{item.name}</Text>
+              <Text style={typography.bodyMuted}>
+                ~{formatQty(avgWeekly)} {item.unit}/week avg · {formatQty(item.currentStock)} {item.unit} on hand
+              </Text>
+            </View>
+            <Text style={styles.restockAmount}>
+              +{formatQty(shortfall)} {item.unit}
             </Text>
           </View>
         ))
@@ -813,7 +950,12 @@ function InventorySection() {
             {cat.toUpperCase()}
           </Text>
           {(grouped.get(cat) ?? []).map((item) => (
-            <InventoryRow key={item.id} item={item} onChanged={load} />
+            <InventoryRow
+              key={item.id}
+              item={item}
+              movements={movementsByItem.get(item.id) ?? []}
+              onChanged={load}
+            />
           ))}
         </View>
       ))}

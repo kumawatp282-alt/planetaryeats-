@@ -141,6 +141,19 @@ export interface InventoryItemInput {
   notes: string | null;
 }
 
+// A logged stock change — what actually moved, not just the running total.
+// 'used' and 'waste' are kept separate so waste is visible on its own, and
+// both feed the "next week" usage-rate estimate; 'restock' doesn't (a
+// delivery isn't a sign you'll need more, it's why you won't).
+export interface InventoryMovement {
+  id: string;
+  itemId: string;
+  type: 'restock' | 'used' | 'waste';
+  quantity: number;
+  note: string | null;
+  createdAt: string;
+}
+
 // What the editor form actually submits — a plain, JSON-shaped version of
 // AdminMenuItem's editable fields (no dishImage — that's derived, never
 // written directly).
@@ -375,6 +388,14 @@ interface StoreContextValue extends StoreState {
   upsertInventoryItem: (input: InventoryItemInput) => Promise<{ error: string | null }>;
   setInventoryStock: (id: string, currentStock: number) => Promise<{ error: string | null }>;
   deleteInventoryItem: (id: string) => Promise<{ error: string | null }>;
+  fetchInventoryMovements: () => Promise<InventoryMovement[]>;
+  logInventoryMovement: (
+    itemId: string,
+    type: InventoryMovement['type'],
+    quantity: number,
+    currentStock: number,
+    note?: string
+  ) => Promise<{ error: string | null }>;
   // Customer's own private nutrition tracking — scoped to the signed-in
   // user by RLS; the business never reads these.
   fetchNutritionLog: (isoDate: string) => Promise<NutritionEntry[]>;
@@ -434,6 +455,17 @@ function rowToInventoryItem(row: any): InventoryItem {
     reorderThreshold: Number(row.reorder_threshold),
     notes: row.notes ?? null,
     updatedAt: row.updated_at,
+  };
+}
+
+function rowToInventoryMovement(row: any): InventoryMovement {
+  return {
+    id: row.id,
+    itemId: row.item_id,
+    type: row.type,
+    quantity: Number(row.quantity),
+    note: row.note ?? null,
+    createdAt: row.created_at,
   };
 }
 
@@ -784,6 +816,35 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       deleteInventoryItem: async (id) => {
         const { error } = await supabase.from('inventory_items').delete().eq('id', id);
         return { error: error?.message ?? null };
+      },
+      fetchInventoryMovements: async () => {
+        // 60 days covers "this week" plus the trailing-4-week average the
+        // next-week estimate uses, without the table growing unbounded in
+        // what the admin panel pulls down on every load.
+        const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+        const { data, error } = await supabase
+          .from('inventory_movements')
+          .select('*')
+          .gte('created_at', cutoff)
+          .order('created_at', { ascending: false });
+        if (error || !data) return [];
+        return data.map(rowToInventoryMovement);
+      },
+      logInventoryMovement: async (itemId, type, quantity, currentStock, note) => {
+        const { error: insertError } = await supabase.from('inventory_movements').insert({
+          item_id: itemId,
+          type,
+          quantity,
+          note: note?.trim() || null,
+        });
+        if (insertError) return { error: insertError.message };
+        const delta = type === 'restock' ? quantity : -quantity;
+        const newStock = Math.max(currentStock + delta, 0);
+        const { error: updateError } = await supabase
+          .from('inventory_items')
+          .update({ current_stock: newStock, updated_at: new Date().toISOString() })
+          .eq('id', itemId);
+        return { error: updateError?.message ?? null };
       },
       fetchNutritionLog: async (isoDate) => {
         if (!user) return [];
