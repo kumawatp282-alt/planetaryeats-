@@ -115,6 +115,32 @@ export interface AdminMenuItem extends MenuItem {
   sortOrder: number;
 }
 
+// Kitchen inventory — admin-only stock tracking. Par-level model: par_level
+// is the target stock when fully stocked, reorder_threshold is the point
+// below which it's flagged as running low.
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category: string;
+  unit: string;
+  currentStock: number;
+  parLevel: number;
+  reorderThreshold: number;
+  notes: string | null;
+  updatedAt: string;
+}
+
+export interface InventoryItemInput {
+  id?: string; // present -> update, absent -> insert
+  name: string;
+  category: string;
+  unit: string;
+  currentStock: number;
+  parLevel: number;
+  reorderThreshold: number;
+  notes: string | null;
+}
+
 // What the editor form actually submits — a plain, JSON-shaped version of
 // AdminMenuItem's editable fields (no dishImage — that's derived, never
 // written directly).
@@ -345,6 +371,10 @@ interface StoreContextValue extends StoreState {
   uploadDishPhoto: (file: File) => Promise<{ url: string | null; error: string | null }>;
   fetchChecklistState: () => Promise<Record<string, boolean>>;
   setChecklistItem: (itemId: string, done: boolean) => Promise<{ error: string | null }>;
+  fetchInventoryItems: () => Promise<InventoryItem[]>;
+  upsertInventoryItem: (input: InventoryItemInput) => Promise<{ error: string | null }>;
+  setInventoryStock: (id: string, currentStock: number) => Promise<{ error: string | null }>;
+  deleteInventoryItem: (id: string) => Promise<{ error: string | null }>;
   // Customer's own private nutrition tracking — scoped to the signed-in
   // user by RLS; the business never reads these.
   fetchNutritionLog: (isoDate: string) => Promise<NutritionEntry[]>;
@@ -390,6 +420,20 @@ function rowToAdminMenuItem(row: any): AdminMenuItem {
     imageUrl: row.image_url ?? null,
     isActive: row.is_active,
     sortOrder: row.sort_order,
+  };
+}
+
+function rowToInventoryItem(row: any): InventoryItem {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    unit: row.unit,
+    currentStock: Number(row.current_stock),
+    parLevel: Number(row.par_level),
+    reorderThreshold: Number(row.reorder_threshold),
+    notes: row.notes ?? null,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -703,6 +747,42 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const { error } = await supabase
           .from('launch_checklist')
           .upsert({ item_id: itemId, done, updated_at: new Date().toISOString() });
+        return { error: error?.message ?? null };
+      },
+      fetchInventoryItems: async () => {
+        const { data, error } = await supabase
+          .from('inventory_items')
+          .select('*')
+          .order('category', { ascending: true })
+          .order('name', { ascending: true });
+        if (error || !data) return [];
+        return data.map(rowToInventoryItem);
+      },
+      upsertInventoryItem: async (input) => {
+        const payload = {
+          name: input.name,
+          category: input.category,
+          unit: input.unit,
+          current_stock: input.currentStock,
+          par_level: input.parLevel,
+          reorder_threshold: input.reorderThreshold,
+          notes: input.notes,
+          updated_at: new Date().toISOString(),
+        };
+        const { error } = input.id
+          ? await supabase.from('inventory_items').update(payload).eq('id', input.id)
+          : await supabase.from('inventory_items').insert(payload);
+        return { error: error?.message ?? null };
+      },
+      setInventoryStock: async (id, currentStock) => {
+        const { error } = await supabase
+          .from('inventory_items')
+          .update({ current_stock: currentStock, updated_at: new Date().toISOString() })
+          .eq('id', id);
+        return { error: error?.message ?? null };
+      },
+      deleteInventoryItem: async (id) => {
+        const { error } = await supabase.from('inventory_items').delete().eq('id', id);
         return { error: error?.message ?? null };
       },
       fetchNutritionLog: async (isoDate) => {

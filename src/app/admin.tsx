@@ -5,7 +5,7 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { AdminMenuItem, AdminProfile, Order, useStore } from '../context/StoreContext';
+import { AdminMenuItem, AdminProfile, InventoryItem, Order, useStore } from '../context/StoreContext';
 import AuthForm from '../components/AuthForm';
 import ReceiptView from '../components/ReceiptView';
 import MenuItemEditorModal from '../components/MenuItemEditorModal';
@@ -26,11 +26,12 @@ import {
   TRUE_COST_BY_VOLUME,
 } from '../data/businessData';
 
-type Section = 'settings' | 'menu' | 'customers' | 'orders' | 'analytics' | 'business';
+type Section = 'settings' | 'menu' | 'inventory' | 'customers' | 'orders' | 'analytics' | 'business';
 
 const SECTION_LABELS: Record<Section, string> = {
   settings: 'Settings',
   menu: 'Menu',
+  inventory: 'Inventory',
   customers: 'Customers',
   orders: 'Orders',
   analytics: 'Analytics',
@@ -83,6 +84,7 @@ export default function AdminScreen() {
       </View>
       {section === 'settings' && <SettingsSection />}
       {section === 'menu' && <MenuSection />}
+      {section === 'inventory' && <InventorySection />}
       {section === 'customers' && <CustomersSection />}
       {section === 'orders' && <OrdersSection />}
       {section === 'analytics' && <AnalyticsSection />}
@@ -400,6 +402,421 @@ function MenuSection() {
         onClose={() => setEditorVisible(false)}
         onSaved={load}
       />
+    </ScrollView>
+  );
+}
+
+// Trims trailing zeros for display — 2.50 -> "2.5", 10.00 -> "10".
+function formatQty(n: number): string {
+  return Number(n.toFixed(2)).toString();
+}
+
+const UNIT_PRESETS = ['kg', 'g', 'l', 'ml', 'pcs', 'pack'];
+
+function InventoryRow({ item, onChanged }: { item: InventoryItem; onChanged: () => void }) {
+  const { setInventoryStock, upsertInventoryItem, deleteInventoryItem } = useStore();
+  const [stockDraft, setStockDraft] = useState(String(item.currentStock));
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(item.name);
+  const [category, setCategory] = useState(item.category);
+  const [unit, setUnit] = useState(item.unit);
+  const [parLevel, setParLevel] = useState(String(item.parLevel));
+  const [reorderThreshold, setReorderThreshold] = useState(String(item.reorderThreshold));
+  const [notes, setNotes] = useState(item.notes ?? '');
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStockDraft(String(item.currentStock));
+  }, [item.currentStock]);
+
+  const commitStock = async () => {
+    const parsed = Number(stockDraft);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed === item.currentStock) {
+      setStockDraft(String(item.currentStock));
+      return;
+    }
+    setSaving(true);
+    await setInventoryStock(item.id, parsed);
+    setSaving(false);
+    onChanged();
+  };
+
+  const saveDetails = async () => {
+    const parsedPar = Number(parLevel);
+    const parsedThreshold = Number(reorderThreshold);
+    if (!name.trim() || !category.trim() || !unit.trim()) {
+      setMessage('Name, category and unit are required.');
+      return;
+    }
+    if (!Number.isFinite(parsedPar) || parsedPar < 0 || !Number.isFinite(parsedThreshold) || parsedThreshold < 0) {
+      setMessage('Enter valid numbers for par level and reorder threshold.');
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    const { error } = await upsertInventoryItem({
+      id: item.id,
+      name: name.trim(),
+      category: category.trim(),
+      unit: unit.trim(),
+      currentStock: item.currentStock,
+      parLevel: parsedPar,
+      reorderThreshold: parsedThreshold,
+      notes: notes.trim() || null,
+    });
+    setSaving(false);
+    if (error) {
+      setMessage(error);
+      return;
+    }
+    setEditing(false);
+    onChanged();
+  };
+
+  const remove = async () => {
+    if (typeof window !== 'undefined' && !window.confirm(`Delete "${item.name}" from inventory?`)) return;
+    setSaving(true);
+    await deleteInventoryItem(item.id);
+    setSaving(false);
+    onChanged();
+  };
+
+  const status: 'out' | 'low' | 'ok' =
+    item.currentStock <= 0 ? 'out' : item.currentStock <= item.reorderThreshold ? 'low' : 'ok';
+
+  return (
+    <View style={styles.rowCard}>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flex: 1 }}>
+            <Text style={typography.body}>{item.name}</Text>
+            <Text style={typography.bodyMuted}>
+              {item.category} · par {formatQty(item.parLevel)} {item.unit}
+            </Text>
+          </View>
+          {status !== 'ok' && (
+            <View style={styles.lowBadge}>
+              <Text style={styles.lowBadgeText}>{status === 'out' ? 'Out' : 'Low'}</Text>
+            </View>
+          )}
+          <View style={styles.stockEditor}>
+            <TextInput
+              value={stockDraft}
+              onChangeText={setStockDraft}
+              onBlur={commitStock}
+              onSubmitEditing={commitStock}
+              keyboardType="numeric"
+              style={[styles.input, styles.stockInput]}
+            />
+            <Text style={styles.unitLabel}>{item.unit}</Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm }}>
+          <Pressable style={styles.smallButton} onPress={() => setEditing(!editing)}>
+            <Text style={styles.smallButtonText}>{editing ? 'Close' : 'Edit'}</Text>
+          </Pressable>
+          <Pressable style={[styles.smallButton, styles.banButton]} onPress={remove} disabled={saving}>
+            <Text style={styles.smallButtonText}>Delete</Text>
+          </Pressable>
+        </View>
+
+        {editing && (
+          <View style={{ marginTop: spacing.md }}>
+            <Text style={typography.label}>NAME</Text>
+            <TextInput value={name} onChangeText={setName} style={styles.input} placeholderTextColor={colors.inkMuted} />
+
+            <Text style={[typography.label, { marginTop: spacing.sm }]}>CATEGORY</Text>
+            <TextInput
+              value={category}
+              onChangeText={setCategory}
+              style={styles.input}
+              placeholderTextColor={colors.inkMuted}
+            />
+
+            <Text style={[typography.label, { marginTop: spacing.sm }]}>UNIT</Text>
+            <TextInput value={unit} onChangeText={setUnit} style={styles.input} placeholderTextColor={colors.inkMuted} />
+            <View style={styles.chipRow}>
+              {UNIT_PRESETS.map((u) => (
+                <Pressable key={u} style={[styles.chip, unit === u && styles.chipActive]} onPress={() => setUnit(u)}>
+                  <Text style={[styles.chipText, unit === u && styles.chipTextActive]}>{u}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={[typography.label, { marginTop: spacing.sm }]}>PAR LEVEL (target stock)</Text>
+            <TextInput
+              value={parLevel}
+              onChangeText={setParLevel}
+              keyboardType="numeric"
+              style={styles.input}
+              placeholderTextColor={colors.inkMuted}
+            />
+
+            <Text style={[typography.label, { marginTop: spacing.sm }]}>REORDER THRESHOLD</Text>
+            <Text style={typography.bodyMuted}>Flagged as "running low" at or below this amount.</Text>
+            <TextInput
+              value={reorderThreshold}
+              onChangeText={setReorderThreshold}
+              keyboardType="numeric"
+              style={styles.input}
+              placeholderTextColor={colors.inkMuted}
+            />
+
+            <Text style={[typography.label, { marginTop: spacing.sm }]}>NOTES</Text>
+            <TextInput
+              value={notes}
+              onChangeText={setNotes}
+              style={styles.input}
+              placeholder="Supplier, size, anything useful"
+              placeholderTextColor={colors.inkMuted}
+            />
+
+            <Pressable style={styles.saveButton} onPress={saveDetails} disabled={saving}>
+              <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save details'}</Text>
+            </Pressable>
+            {message && <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>{message}</Text>}
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function InventorySection() {
+  const { fetchInventoryItems, upsertInventoryItem } = useStore();
+  const [items, setItems] = useState<InventoryItem[] | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('');
+  const [unit, setUnit] = useState('kg');
+  const [currentStock, setCurrentStock] = useState('0');
+  const [parLevel, setParLevel] = useState('0');
+  const [reorderThreshold, setReorderThreshold] = useState('0');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = () => {
+    fetchInventoryItems().then(setItems);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const resetForm = () => {
+    setName('');
+    setCategory('');
+    setUnit('kg');
+    setCurrentStock('0');
+    setParLevel('0');
+    setReorderThreshold('0');
+    setNotes('');
+    setMessage(null);
+  };
+
+  const addIngredient = async () => {
+    const parsedCurrent = Number(currentStock);
+    const parsedPar = Number(parLevel);
+    const parsedThreshold = Number(reorderThreshold);
+    if (!name.trim() || !unit.trim()) {
+      setMessage('Enter at least a name and a unit.');
+      return;
+    }
+    if (![parsedCurrent, parsedPar, parsedThreshold].every((n) => Number.isFinite(n) && n >= 0)) {
+      setMessage('Stock, par level and reorder threshold must be valid numbers.');
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    const { error } = await upsertInventoryItem({
+      name: name.trim(),
+      category: category.trim() || 'Other',
+      unit: unit.trim(),
+      currentStock: parsedCurrent,
+      parLevel: parsedPar,
+      reorderThreshold: parsedThreshold,
+      notes: notes.trim() || null,
+    });
+    setSaving(false);
+    if (error) {
+      setMessage(error);
+      return;
+    }
+    resetForm();
+    setShowAddForm(false);
+    load();
+  };
+
+  if (!items) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  const needsRestock = items
+    .filter((i) => i.currentStock <= i.reorderThreshold)
+    .map((i) => ({
+      item: i,
+      suggested: Math.max(i.parLevel - i.currentStock, i.reorderThreshold - i.currentStock, 0),
+    }))
+    .sort(
+      (a, b) => a.item.currentStock - a.item.reorderThreshold - (b.item.currentStock - b.item.reorderThreshold)
+    );
+
+  const existingCategories = Array.from(new Set(items.map((i) => i.category))).sort();
+  const grouped = new Map<string, InventoryItem[]>();
+  items.forEach((i) => {
+    const list = grouped.get(i.category) ?? [];
+    list.push(i);
+    grouped.set(i.category, list);
+  });
+  const groupNames = Array.from(grouped.keys()).sort();
+
+  return (
+    <ScrollView contentContainerStyle={styles.sectionContent}>
+      <View style={styles.privateBanner}>
+        <Text style={styles.privateBannerText}>
+          📦 Internal only — ingredient stock and reorder estimates for kitchen ops, never shown to customers.
+        </Text>
+      </View>
+
+      <Text style={typography.label}>NEEDS RESTOCK</Text>
+      {needsRestock.length === 0 ? (
+        <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>Everything's stocked. ✓</Text>
+      ) : (
+        needsRestock.map(({ item, suggested }) => (
+          <View key={item.id} style={styles.statRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={typography.body}>{item.name}</Text>
+              <Text style={typography.bodyMuted}>
+                {formatQty(item.currentStock)} {item.unit} left · reorder at {formatQty(item.reorderThreshold)}{' '}
+                {item.unit}
+              </Text>
+            </View>
+            <Text style={styles.restockAmount}>
+              +{formatQty(suggested)} {item.unit}
+            </Text>
+          </View>
+        ))
+      )}
+
+      <Pressable
+        style={styles.saveButton}
+        onPress={() => {
+          if (!showAddForm) resetForm();
+          setShowAddForm(!showAddForm);
+        }}
+      >
+        <Text style={styles.saveButtonText}>{showAddForm ? 'Cancel' : '+ Add ingredient'}</Text>
+      </Pressable>
+
+      {showAddForm && (
+        <View style={{ marginTop: spacing.md }}>
+          <Text style={typography.label}>NAME</Text>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            style={styles.input}
+            placeholder="e.g. Basmati rice"
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>CATEGORY</Text>
+          <TextInput
+            value={category}
+            onChangeText={setCategory}
+            style={styles.input}
+            placeholder="e.g. Grains"
+            placeholderTextColor={colors.inkMuted}
+          />
+          {existingCategories.length > 0 && (
+            <View style={styles.chipRow}>
+              {existingCategories.map((c) => (
+                <Pressable key={c} style={styles.chip} onPress={() => setCategory(c)}>
+                  <Text style={styles.chipText}>{c}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>UNIT</Text>
+          <TextInput
+            value={unit}
+            onChangeText={setUnit}
+            style={styles.input}
+            placeholder="kg"
+            placeholderTextColor={colors.inkMuted}
+          />
+          <View style={styles.chipRow}>
+            {UNIT_PRESETS.map((u) => (
+              <Pressable key={u} style={[styles.chip, unit === u && styles.chipActive]} onPress={() => setUnit(u)}>
+                <Text style={[styles.chipText, unit === u && styles.chipTextActive]}>{u}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>CURRENT STOCK</Text>
+          <TextInput
+            value={currentStock}
+            onChangeText={setCurrentStock}
+            keyboardType="numeric"
+            style={styles.input}
+            placeholder="0"
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>PAR LEVEL (target stock)</Text>
+          <Text style={typography.bodyMuted}>How much you like to keep on hand when fully stocked.</Text>
+          <TextInput
+            value={parLevel}
+            onChangeText={setParLevel}
+            keyboardType="numeric"
+            style={styles.input}
+            placeholder="0"
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>REORDER THRESHOLD</Text>
+          <Text style={typography.bodyMuted}>Flagged as "running low" at or below this amount.</Text>
+          <TextInput
+            value={reorderThreshold}
+            onChangeText={setReorderThreshold}
+            keyboardType="numeric"
+            style={styles.input}
+            placeholder="0"
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>NOTES (optional)</Text>
+          <TextInput
+            value={notes}
+            onChangeText={setNotes}
+            style={styles.input}
+            placeholder="Supplier, size, anything useful"
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Pressable style={styles.saveButton} onPress={addIngredient} disabled={saving}>
+            <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save ingredient'}</Text>
+          </Pressable>
+          {message && <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>{message}</Text>}
+        </View>
+      )}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>ALL INGREDIENTS</Text>
+      {items.length === 0 && <Text style={typography.bodyMuted}>No ingredients yet — add your first one above.</Text>}
+      {groupNames.map((cat) => (
+        <View key={cat}>
+          <Text style={[typography.label, { marginTop: spacing.md, marginBottom: spacing.xs, fontSize: 11 }]}>
+            {cat.toUpperCase()}
+          </Text>
+          {(grouped.get(cat) ?? []).map((item) => (
+            <InventoryRow key={item.id} item={item} onChanged={load} />
+          ))}
+        </View>
+      ))}
     </ScrollView>
   );
 }
@@ -1141,6 +1558,40 @@ const styles = StyleSheet.create({
   },
   adminToggleButton: {
     backgroundColor: colors.clay,
+  },
+  restockAmount: {
+    fontWeight: '700',
+    fontSize: 13,
+    color: colors.danger,
+    marginLeft: spacing.sm,
+  },
+  lowBadge: {
+    backgroundColor: colors.danger,
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginRight: spacing.sm,
+  },
+  lowBadgeText: {
+    color: colors.white,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  stockEditor: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  stockInput: {
+    width: 64,
+    marginTop: 0,
+    textAlign: 'right',
+    paddingVertical: 6,
+  },
+  unitLabel: {
+    fontSize: 12,
+    color: colors.inkMuted,
+    fontWeight: '600',
   },
   banButton: {
     backgroundColor: colors.danger,
