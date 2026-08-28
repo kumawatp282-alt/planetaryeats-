@@ -6,11 +6,13 @@
 // the globe is fully ready — not popping in a beat late — the instant the
 // splash clears.
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text } from 'react-native';
+import { Animated, Image, StyleSheet } from 'react-native';
 import { Asset } from 'expo-asset';
-import { colors, fonts } from '../constants/theme';
+import { colors } from '../constants/theme';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const earthTextureModule = require('../assets/earth.jpg');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logoImage = require('../assets/planetary-eats-logo.png');
 
 const HOLD_MS = 3200;
 const EXIT_MS = 700;
@@ -53,8 +55,12 @@ export default function SplashOverlay() {
   return (
     <Animated.View pointerEvents="none" style={[styles.wrap, { opacity }]}>
       <Animated.View style={{ transform: [{ scale: Animated.multiply(scale, logoScale) }], alignItems: 'center' }}>
-        <Text style={styles.wordmark}>PLANETARY EATS</Text>
-        <Text style={styles.tagline}>Explore the World, One Bowl at a Time.</Text>
+        <Image
+          source={logoImage}
+          style={styles.logo}
+          resizeMode="contain"
+          accessibilityLabel="Planetary Eats"
+        />
       </Animated.View>
     </Animated.View>
   );
@@ -72,17 +78,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 9999,
   },
-  wordmark: {
-    fontSize: 26,
-    fontWeight: '600',
-    color: colors.ink,
-    letterSpacing: 2,
-    fontFamily: fonts.heading,
-  },
-  tagline: {
-    fontSize: 13,
-    color: colors.inkMuted,
-    marginTop: 6,
-    fontFamily: fonts.body,
+  logo: {
+    width: 280,
+    height: 190,
   },
 });
