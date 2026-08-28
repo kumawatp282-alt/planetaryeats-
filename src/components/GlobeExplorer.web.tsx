@@ -21,7 +21,10 @@ interface Props {
 
 const SPHERE_RADIUS = 1.3;
 const CAMERA_Z = 3.2;
+const CAMERA_Z_MIN = 3.0;
+const CAMERA_Z_MAX = 3.85;
 const AUTO_ROTATION_SPEED = 0.00012; // radians per millisecond (one turn in ~52 seconds)
+const INTRO_COMPLETE_EVENT = 'planetary-eats:intro-complete';
 
 function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
@@ -144,8 +147,11 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       loadedTexture.generateMipmaps = false;
       loadedTexture.minFilter = THREE.LinearFilter;
       loadedTexture.magFilter = THREE.LinearFilter;
-      loadedTexture.wrapS = THREE.ClampToEdgeWrapping;
+      // Blend the two antimeridian edges together instead of clamping them
+      // independently. This removes the pole-to-pole line over the Pacific.
+      loadedTexture.wrapS = THREE.RepeatWrapping;
       loadedTexture.wrapT = THREE.ClampToEdgeWrapping;
+      loadedTexture.needsUpdate = true;
       material.map = loadedTexture;
       material.color.set(0xffffff);
       material.needsUpdate = true;
@@ -201,7 +207,21 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     });
 
     // Keep the globe drifting until the user takes control by dragging it.
-    const state = { rotY: 0.3, rotX: 0, dragging: false, lastX: 0, lastY: 0 };
+    // The film's final frame is authored at rotY=0 (the Americas centered).
+    // Hold that exact pose until the overlay has landed on this canvas and
+    // faded away; only then resume the normal automatic drift.
+    const state = {
+      rotY: 0,
+      rotX: 0,
+      cameraZ: CAMERA_Z,
+      cameraZTarget: CAMERA_Z,
+      dragging: false,
+      lastX: 0,
+      lastY: 0,
+      introComplete:
+        typeof document === 'undefined' ||
+        document.documentElement.dataset.planetaryIntro === 'complete',
+    };
 
     const onPointerDown = (e: PointerEvent) => {
       state.dragging = true;
@@ -219,12 +239,26 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     };
     const onPointerUp = () => {
       state.dragging = false;
+      canvas.style.cursor = 'grab';
+    };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      state.cameraZTarget = Math.max(
+        CAMERA_Z_MIN,
+        Math.min(CAMERA_Z_MAX, state.cameraZTarget - e.deltaY * 0.0012)
+      );
+    };
+    const onIntroComplete = () => {
+      state.introComplete = true;
+      lastFrameTime = performance.now();
     };
 
     canvas.style.cursor = 'grab';
     canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener(INTRO_COMPLETE_EVENT, onIntroComplete);
 
     let raf = 0;
     let lastFrameTime = performance.now();
@@ -233,7 +267,12 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       // Clamp it to prevent a large jump after returning to a background tab.
       const elapsed = Math.min(frameTime - lastFrameTime, 100);
       lastFrameTime = frameTime;
-      if (!state.dragging) state.rotY += AUTO_ROTATION_SPEED * elapsed;
+      if (state.introComplete && !state.dragging) {
+        state.rotY += AUTO_ROTATION_SPEED * elapsed;
+      }
+
+      state.cameraZ += (state.cameraZTarget - state.cameraZ) * 0.12;
+      camera.position.z = state.cameraZ;
 
       sphere.rotation.y = state.rotY;
       sphere.rotation.x = state.rotX;
@@ -275,8 +314,10 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     return () => {
       cancelAnimationFrame(raf);
       canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('wheel', onWheel);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener(INTRO_COMPLETE_EVENT, onIntroComplete);
       renderer.dispose();
       geometry.dispose();
       material.dispose();
@@ -365,6 +406,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           }}
         >
           <CanvasEl
+            id="planetary-eats-live-globe"
             ref={canvasRef}
             width={globeSize}
             height={globeSize}
@@ -455,7 +497,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         </View>
 
         <Text style={[styles.hint, activeBowlId ? { opacity: 0 } : null]}>
-          Drag to spin · tap a bowl to explore
+          Scroll to zoom · drag to spin · tap a bowl to explore
         </Text>
 
         <BowlPopModal
