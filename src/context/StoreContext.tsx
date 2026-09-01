@@ -35,7 +35,7 @@ export interface CartLine {
   riceScoops?: number; // "build your bowl" base portion, 1-3 — a preference, not priced
 }
 
-export type OrderStatus = 'placed' | 'preparing' | 'out_for_delivery' | 'delivered';
+export type OrderStatus = 'placed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
 
 export interface FulfillmentDetails {
   method: 'delivery' | 'pickup';
@@ -53,7 +53,8 @@ export interface Order {
   fulfillment: FulfillmentDetails;
   paymentMethod: string;
   placedAt: string; // ISO timestamp
-  source: string; // 'website' (default) | 'lieferando' | 'phone' | 'walk-in' | ...
+  source: string; // 'website' (default) | 'lieferando' | 'phone' | 'walk-in' | 'staff' | ...
+  cancellationReason: string | null;
 }
 
 // A single thing the customer ate that didn't come from a Planetary Eats
@@ -94,6 +95,11 @@ export interface AppSettings {
   minimumOrderValue: number;
   promoCode: string; // '' disables the promo code field entirely
   promoDiscount: number; // fraction, e.g. 0.1 = 10% off
+  // Recurring costs with no other source to derive them from (no shift/
+  // timesheet system exists) — the dashboard prorates these to whatever
+  // period it's showing, for the P&L.
+  weeklyLaborCost: number;
+  weeklyOperatingCosts: number;
 }
 
 export interface AdminProfile {
@@ -136,6 +142,9 @@ export interface InventoryItem {
   fiberPerUnit: number | null;
   carbsPerUnit: number | null;
   fatPerUnit: number | null;
+  // What one unit actually costs to buy — powers per-dish margin (menu
+  // engineering) and turns a logged waste quantity into a waste cost.
+  costPerUnit: number | null;
 }
 
 export interface InventoryItemInput {
@@ -152,6 +161,7 @@ export interface InventoryItemInput {
   fiberPerUnit: number | null;
   carbsPerUnit: number | null;
   fatPerUnit: number | null;
+  costPerUnit: number | null;
 }
 
 // A logged stock change — what actually moved, not just the running total.
@@ -192,6 +202,17 @@ export interface RecipeIngredientInput {
   triggerValue: string | null;
 }
 
+// A flattened recipe row for bulk cost analysis across every dish at once
+// (menu engineering) — costPerUnit is null when the ingredient doesn't
+// have one entered yet, same convention as nutrition-per-unit.
+export interface RecipeCostRow {
+  menuItemId: string;
+  triggerType: RecipeTriggerType;
+  triggerValue: string | null;
+  quantity: number;
+  costPerUnit: number | null;
+}
+
 // What the editor form actually submits — a plain, JSON-shaped version of
 // AdminMenuItem's editable fields (no dishImage — that's derived, never
 // written directly).
@@ -226,6 +247,8 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   minimumOrderValue: 0,
   promoCode: 'WORLD10',
   promoDiscount: 0.1,
+  weeklyLaborCost: 0,
+  weeklyOperatingCosts: 0,
 };
 
 interface StoreState {
@@ -407,10 +430,13 @@ interface StoreContextValue extends StoreState {
         | 'minimumOrderValue'
         | 'promoCode'
         | 'promoDiscount'
+        | 'weeklyLaborCost'
+        | 'weeklyOperatingCosts'
       >
     >
   ) => Promise<{ error: string | null }>;
   fetchAllOrders: () => Promise<Order[]>;
+  cancelOrder: (orderId: string, reason: string) => Promise<{ error: string | null }>;
   fetchAllProfiles: () => Promise<AdminProfile[]>;
   setUserBanned: (userId: string, banned: boolean) => Promise<{ error: string | null }>;
   setUserAdmin: (userId: string, isAdmin: boolean) => Promise<{ error: string | null }>;
@@ -443,6 +469,10 @@ interface StoreContextValue extends StoreState {
   // "estimated for the default protein choice" elsewhere); 'addon' never
   // counts, since add-ons aren't included in a dish's base nutrition figure.
   computeNutritionFromRecipe: (menuItemId: string, defaultProtein?: string) => Promise<Nutrition | null>;
+  // Every recipe row across every dish, with its ingredient's cost — one
+  // query the dashboard groups by menu item itself, rather than N+1
+  // queries for a per-dish cost lookup.
+  fetchAllRecipeCosts: () => Promise<RecipeCostRow[]>;
   // Customer's own private nutrition tracking — scoped to the signed-in
   // user by RLS; the business never reads these.
   fetchNutritionLog: (isoDate: string) => Promise<NutritionEntry[]>;
@@ -468,6 +498,7 @@ function rowToOrder(row: any): Order {
     paymentMethod: row.payment_method,
     placedAt: row.placed_at,
     source: row.source ?? 'website',
+    cancellationReason: row.cancellation_reason ?? null,
   };
 }
 
@@ -511,6 +542,7 @@ function rowToInventoryItem(row: any): InventoryItem {
     fiberPerUnit: nullableNum(row.fiber_per_unit),
     carbsPerUnit: nullableNum(row.carbs_per_unit),
     fatPerUnit: nullableNum(row.fat_per_unit),
+    costPerUnit: nullableNum(row.cost_per_unit),
   };
 }
 
@@ -628,6 +660,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             minimumOrderValue: Number(data.minimum_order_value ?? 0),
             promoCode: data.promo_code ?? 'WORLD10',
             promoDiscount: Number(data.promo_discount ?? 0.1),
+            weeklyLaborCost: Number(data.weekly_labor_cost ?? 0),
+            weeklyOperatingCosts: Number(data.weekly_operating_costs ?? 0),
           },
         });
       });
@@ -689,6 +723,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           paymentMethod,
           placedAt: new Date().toISOString(),
           source: 'website',
+          cancellationReason: null,
         };
         const { error } = await supabase.from('orders').insert({
           id: order.id,
@@ -727,7 +762,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       },
       advanceOrderStatus: (orderId) => {
         const order = state.orders.find((o) => o.id === orderId);
-        if (!order) return;
+        // A cancelled order isn't part of the normal sequence — indexOf
+        // would return -1 and this would wrap around to 'placed'.
+        if (!order || order.status === 'cancelled') return;
         const nextIndex = Math.min(STATUS_SEQUENCE.indexOf(order.status) + 1, STATUS_SEQUENCE.length - 1);
         const nextStatus = STATUS_SEQUENCE[nextIndex];
         dispatch({ type: 'SET_ORDER_STATUS', orderId, status: nextStatus });
@@ -768,6 +805,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (changes.minimumOrderValue !== undefined) payload.minimum_order_value = changes.minimumOrderValue;
         if (changes.promoCode !== undefined) payload.promo_code = changes.promoCode;
         if (changes.promoDiscount !== undefined) payload.promo_discount = changes.promoDiscount;
+        if (changes.weeklyLaborCost !== undefined) payload.weekly_labor_cost = changes.weeklyLaborCost;
+        if (changes.weeklyOperatingCosts !== undefined) payload.weekly_operating_costs = changes.weeklyOperatingCosts;
         const { error } = await supabase.from('app_settings').update(payload).eq('id', 1);
         if (error) return { error: error.message };
         dispatch({ type: 'SET_APP_SETTINGS', settings: { ...state.appSettings, ...changes } });
@@ -777,6 +816,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const { data, error } = await supabase.from('orders').select('*').order('placed_at', { ascending: false });
         if (error || !data) return [];
         return data.map(rowToOrder);
+      },
+      cancelOrder: async (orderId, reason) => {
+        const { error } = await supabase
+          .from('orders')
+          .update({ status: 'cancelled', cancellation_reason: reason })
+          .eq('id', orderId);
+        if (error) return { error: error.message };
+        dispatch({ type: 'SET_ORDER_STATUS', orderId, status: 'cancelled' });
+        return { error: null };
       },
       fetchAllProfiles: async () => {
         const { data, error } = await supabase
@@ -871,6 +919,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           fiber_per_unit: input.fiberPerUnit,
           carbs_per_unit: input.carbsPerUnit,
           fat_per_unit: input.fatPerUnit,
+          cost_per_unit: input.costPerUnit,
           updated_at: new Date().toISOString(),
         };
         const { error } = input.id
@@ -973,6 +1022,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           carbs: Math.round(totals.carbs),
           fat: Math.round(totals.fat),
         };
+      },
+      fetchAllRecipeCosts: async () => {
+        const { data, error } = await supabase
+          .from('recipe_ingredients')
+          .select('menu_item_id, trigger_type, trigger_value, quantity, inventory_items(cost_per_unit)');
+        if (error || !data) return [];
+        return data.map((row: any) => ({
+          menuItemId: row.menu_item_id,
+          triggerType: row.trigger_type,
+          triggerValue: row.trigger_value ?? null,
+          quantity: Number(row.quantity),
+          costPerUnit: nullableNum(row.inventory_items?.cost_per_unit),
+        }));
       },
       fetchNutritionLog: async (isoDate) => {
         if (!user) return [];

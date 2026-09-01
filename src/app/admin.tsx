@@ -10,7 +10,9 @@ import {
   AdminProfile,
   InventoryItem,
   InventoryMovement,
+  lineUnitPrice,
   Order,
+  RecipeCostRow,
   RecipeIngredient,
   RecipeTriggerType,
   useStore,
@@ -36,9 +38,19 @@ import {
   TRUE_COST_BY_VOLUME,
 } from '../data/businessData';
 
-type Section = 'settings' | 'menu' | 'inventory' | 'recipes' | 'customers' | 'orders' | 'analytics' | 'business';
+type Section =
+  | 'dashboard'
+  | 'settings'
+  | 'menu'
+  | 'inventory'
+  | 'recipes'
+  | 'customers'
+  | 'orders'
+  | 'analytics'
+  | 'business';
 
 const SECTION_LABELS: Record<Section, string> = {
+  dashboard: 'Dashboard',
   settings: 'Settings',
   menu: 'Menu',
   inventory: 'Inventory',
@@ -51,7 +63,7 @@ const SECTION_LABELS: Record<Section, string> = {
 
 export default function AdminScreen() {
   const { user, loading, isAdmin } = useAuth();
-  const [section, setSection] = useState<Section>('settings');
+  const [section, setSection] = useState<Section>('dashboard');
 
   if (loading) {
     return (
@@ -93,6 +105,7 @@ export default function AdminScreen() {
           </Pressable>
         ))}
       </View>
+      {section === 'dashboard' && <DashboardSection />}
       {section === 'settings' && <SettingsSection />}
       {section === 'menu' && <MenuSection />}
       {section === 'inventory' && <InventorySection />}
@@ -114,6 +127,8 @@ function SettingsSection() {
   const [hours, setHours] = useState<OpeningHours>(appSettings.openingHours);
   const [promoCode, setPromoCode] = useState(appSettings.promoCode);
   const [promoDiscountPct, setPromoDiscountPct] = useState(String(appSettings.promoDiscount * 100));
+  const [weeklyLaborCost, setWeeklyLaborCost] = useState(String(appSettings.weeklyLaborCost));
+  const [weeklyOperatingCosts, setWeeklyOperatingCosts] = useState(String(appSettings.weeklyOperatingCosts));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -124,6 +139,8 @@ function SettingsSection() {
     setHours(appSettings.openingHours);
     setPromoCode(appSettings.promoCode);
     setPromoDiscountPct(String(appSettings.promoDiscount * 100));
+    setWeeklyLaborCost(String(appSettings.weeklyLaborCost));
+    setWeeklyOperatingCosts(String(appSettings.weeklyOperatingCosts));
   }, [
     appSettings.deliveryRadiusKm,
     appSettings.closedPostcodes,
@@ -131,6 +148,8 @@ function SettingsSection() {
     appSettings.openingHours,
     appSettings.promoCode,
     appSettings.promoDiscount,
+    appSettings.weeklyLaborCost,
+    appSettings.weeklyOperatingCosts,
   ]);
 
   const addPostcode = () => {
@@ -162,6 +181,12 @@ function SettingsSection() {
       setMessage('Enter a valid promo discount percentage (0-100).');
       return;
     }
+    const parsedLabor = Number(weeklyLaborCost);
+    const parsedOperating = Number(weeklyOperatingCosts);
+    if (!Number.isFinite(parsedLabor) || parsedLabor < 0 || !Number.isFinite(parsedOperating) || parsedOperating < 0) {
+      setMessage('Enter valid numbers for labor and operating costs.');
+      return;
+    }
     setSaving(true);
     setMessage(null);
     const { error } = await updateAppSettings({
@@ -171,6 +196,8 @@ function SettingsSection() {
       openingHours: hours,
       promoCode: promoCode.trim().toUpperCase(),
       promoDiscount: parsedPromoPct / 100,
+      weeklyLaborCost: parsedLabor,
+      weeklyOperatingCosts: parsedOperating,
     });
     setSaving(false);
     setMessage(error ?? 'Saved.');
@@ -292,6 +319,31 @@ function SettingsSection() {
         keyboardType="numeric"
         style={styles.input}
         placeholder="10"
+        placeholderTextColor={colors.inkMuted}
+      />
+
+      <Text style={[typography.label, { marginTop: spacing.lg }]}>OPERATIONS</Text>
+      <Text style={typography.bodyMuted}>
+        No shift/timesheet system exists yet, so these are the two figures the Dashboard's profit &amp; loss uses —
+        keep them roughly current and it'll keep up.
+      </Text>
+      <Text style={[typography.label, { marginTop: spacing.sm }]}>WEEKLY LABOR COST (€)</Text>
+      <TextInput
+        value={weeklyLaborCost}
+        onChangeText={setWeeklyLaborCost}
+        keyboardType="numeric"
+        style={styles.input}
+        placeholder="0"
+        placeholderTextColor={colors.inkMuted}
+      />
+      <Text style={[typography.label, { marginTop: spacing.sm }]}>OTHER WEEKLY OPERATING COSTS (€)</Text>
+      <Text style={typography.bodyMuted}>Rent, utilities, subscriptions — anything recurring besides ingredients and labor.</Text>
+      <TextInput
+        value={weeklyOperatingCosts}
+        onChangeText={setWeeklyOperatingCosts}
+        keyboardType="numeric"
+        style={styles.input}
+        placeholder="0"
         placeholderTextColor={colors.inkMuted}
       />
 
@@ -457,6 +509,7 @@ function InventoryRow({
   const [fiberPerUnit, setFiberPerUnit] = useState(item.fiberPerUnit !== null ? String(item.fiberPerUnit) : '');
   const [carbsPerUnit, setCarbsPerUnit] = useState(item.carbsPerUnit !== null ? String(item.carbsPerUnit) : '');
   const [fatPerUnit, setFatPerUnit] = useState(item.fatPerUnit !== null ? String(item.fatPerUnit) : '');
+  const [costPerUnit, setCostPerUnit] = useState(item.costPerUnit !== null ? String(item.costPerUnit) : '');
   const [message, setMessage] = useState<string | null>(null);
   const [logging, setLogging] = useState(false);
   const [moveType, setMoveType] = useState<InventoryMovement['type']>('used');
@@ -491,9 +544,9 @@ function InventoryRow({
       setMessage('Enter valid numbers for par level and reorder threshold.');
       return;
     }
-    const nutritionFields = [caloriesPerUnit, proteinPerUnit, fiberPerUnit, carbsPerUnit, fatPerUnit];
-    if (nutritionFields.some((v) => v.trim() && (!Number.isFinite(Number(v)) || Number(v) < 0))) {
-      setMessage('Per-unit nutrition values must be valid numbers, or left blank.');
+    const numericFields = [caloriesPerUnit, proteinPerUnit, fiberPerUnit, carbsPerUnit, fatPerUnit, costPerUnit];
+    if (numericFields.some((v) => v.trim() && (!Number.isFinite(Number(v)) || Number(v) < 0))) {
+      setMessage('Per-unit nutrition and cost values must be valid numbers, or left blank.');
       return;
     }
     setSaving(true);
@@ -512,6 +565,7 @@ function InventoryRow({
       fiberPerUnit: fiberPerUnit.trim() ? Number(fiberPerUnit) : null,
       carbsPerUnit: carbsPerUnit.trim() ? Number(carbsPerUnit) : null,
       fatPerUnit: fatPerUnit.trim() ? Number(fatPerUnit) : null,
+      costPerUnit: costPerUnit.trim() ? Number(costPerUnit) : null,
     });
     setSaving(false);
     if (error) {
@@ -751,6 +805,18 @@ function InventoryRow({
               </View>
             </View>
 
+            <Text style={[typography.label, { marginTop: spacing.md }]}>COST PER {unit.toUpperCase() || 'UNIT'} (€)</Text>
+            <Text style={typography.bodyMuted}>
+              What one unit actually costs to buy — powers dish margins and turns logged waste into a cost figure.
+            </Text>
+            <TextInput
+              value={costPerUnit}
+              onChangeText={setCostPerUnit}
+              keyboardType="numeric"
+              style={styles.input}
+              placeholderTextColor={colors.inkMuted}
+            />
+
             <Pressable style={styles.saveButton} onPress={saveDetails} disabled={saving}>
               <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save details'}</Text>
             </Pressable>
@@ -825,6 +891,7 @@ function InventorySection() {
       fiberPerUnit: null,
       carbsPerUnit: null,
       fatPerUnit: null,
+      costPerUnit: null,
     });
     setSaving(false);
     if (error) {
@@ -1556,10 +1623,10 @@ function CustomersSection() {
   );
 }
 
-const MANUAL_SOURCES = ['Lieferando', 'Phone', 'Walk-in', 'Other'];
+const MANUAL_SOURCES = ['Lieferando', 'Phone', 'Walk-in', 'Staff', 'Other'];
 
 function OrdersSection() {
-  const { fetchAllOrders, fetchAllProfiles, logManualOrder } = useStore();
+  const { fetchAllOrders, fetchAllProfiles, logManualOrder, cancelOrder } = useStore();
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [emailById, setEmailById] = useState<Record<string, string>>({});
   const [openReceipt, setOpenReceipt] = useState<Order | null>(null);
@@ -1611,6 +1678,14 @@ function OrdersSection() {
     setManualTotal('');
     setManualAddress('');
     setShowManualForm(false);
+    load();
+  };
+
+  const cancelOrRefund = async (order: Order) => {
+    if (typeof window === 'undefined') return;
+    const reason = window.prompt(`Cancel or mark "${order.id}" as returned — what's the reason?`);
+    if (reason === null) return;
+    await cancelOrder(order.id, reason.trim() || 'No reason given');
     load();
   };
 
@@ -1681,20 +1756,381 @@ function OrdersSection() {
 
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>ALL ORDERS</Text>
       {orders.map((order) => (
-        <Pressable key={order.id} style={styles.rowCard} onPress={() => setOpenReceipt(order)}>
-          <View style={{ flex: 1 }}>
+        <View key={order.id} style={styles.rowCard}>
+          <Pressable style={{ flex: 1 }} onPress={() => setOpenReceipt(order)}>
             <Text style={typography.body}>
               {order.id} · {formatPrice(order.total)}
               {order.source !== 'website' && <Text style={styles.sourceTag}> · {order.source}</Text>}
+              {order.status === 'cancelled' && <Text style={styles.cancelledTag}> · Cancelled/Returned</Text>}
             </Text>
             <Text style={typography.bodyMuted}>
               {(order.userId && emailById[order.userId]) ?? order.fulfillment.address ?? 'No address'} ·{' '}
               {new Date(order.placedAt).toLocaleString()}
             </Text>
-          </View>
-        </Pressable>
+            {order.status === 'cancelled' && order.cancellationReason && (
+              <Text style={[typography.bodyMuted, { fontSize: 11, marginTop: 2 }]}>
+                Reason: {order.cancellationReason}
+              </Text>
+            )}
+          </Pressable>
+          {order.status !== 'cancelled' && (
+            <Pressable style={[styles.smallButton, styles.banButton]} onPress={() => cancelOrRefund(order)}>
+              <Text style={styles.smallButtonText}>Cancel</Text>
+            </Pressable>
+          )}
+        </View>
       ))}
       {orders.length === 0 && <Text style={typography.bodyMuted}>No orders yet.</Text>}
+    </ScrollView>
+  );
+}
+
+type DashboardPeriod = 'today' | 'week' | 'month';
+
+const PERIOD_LABELS: Record<DashboardPeriod, string> = {
+  today: 'Today',
+  week: 'This week',
+  month: 'This month',
+};
+
+const PERIOD_DAYS: Record<DashboardPeriod, number> = {
+  today: 1,
+  week: 7,
+  month: 30,
+};
+
+function periodStart(period: DashboardPeriod): Date {
+  const now = new Date();
+  if (period === 'today') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+  const days = PERIOD_DAYS[period];
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+// Menu-engineering quadrant — the classic popularity-vs-margin split,
+// against the median of whatever's actually sold in the period rather
+// than a fixed threshold, so it stays meaningful at any sales volume.
+type MenuQuadrant = 'Star' | 'Plowhorse' | 'Puzzle' | 'Dog';
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function DashboardSection() {
+  const {
+    fetchAllOrders,
+    fetchInventoryItems,
+    fetchInventoryMovements,
+    fetchAllRecipeCosts,
+    fetchAllMenuItemsAdmin,
+    appSettings,
+  } = useStore();
+  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[] | null>(null);
+  const [movements, setMovements] = useState<InventoryMovement[]>([]);
+  const [recipeCosts, setRecipeCosts] = useState<RecipeCostRow[]>([]);
+  const [menuItems, setMenuItems] = useState<AdminMenuItem[] | null>(null);
+  const [period, setPeriod] = useState<DashboardPeriod>('week');
+
+  useEffect(() => {
+    fetchAllOrders().then(setOrders);
+    fetchInventoryItems().then(setInventoryItems);
+    fetchInventoryMovements().then(setMovements);
+    fetchAllRecipeCosts().then(setRecipeCosts);
+    fetchAllMenuItemsAdmin().then(setMenuItems);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!orders || !inventoryItems || !menuItems) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  const start = periodStart(period);
+  const inPeriod = (iso: string) => new Date(iso) >= start;
+
+  const periodOrders = orders.filter((o) => inPeriod(o.placedAt));
+  const cancelledOrders = periodOrders.filter((o) => o.status === 'cancelled');
+  const staffOrders = periodOrders.filter((o) => o.source === 'staff');
+  const revenueOrders = periodOrders.filter((o) => o.status !== 'cancelled' && o.source !== 'staff');
+
+  const revenue = revenueOrders.reduce((sum, o) => sum + o.total, 0);
+  const orderCount = revenueOrders.length;
+  const aov = orderCount > 0 ? revenue / orderCount : 0;
+
+  const dishStats = new Map<string, { name: string; qty: number; revenue: number }>();
+  revenueOrders.forEach((o) => {
+    o.lines.forEach((line) => {
+      const key = line.item.id;
+      const entry = dishStats.get(key) ?? { name: line.item.name, qty: 0, revenue: 0 };
+      entry.qty += line.quantity;
+      entry.revenue += lineUnitPrice(line) * line.quantity;
+      dishStats.set(key, entry);
+    });
+  });
+  const topDishes = Array.from(dishStats.values())
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 8);
+
+  const inventoryById = new Map(inventoryItems.map((i) => [i.id, i]));
+  const periodMovements = movements.filter((m) => inPeriod(m.createdAt));
+
+  const cogs = periodMovements
+    .filter((m) => m.type === 'used')
+    .reduce((sum, m) => sum + (inventoryById.get(m.itemId)?.costPerUnit ?? 0) * m.quantity, 0);
+
+  const wasteByIngredient = new Map<string, { name: string; unit: string; quantity: number; cost: number }>();
+  let wasteCost = 0;
+  periodMovements
+    .filter((m) => m.type === 'waste')
+    .forEach((m) => {
+      const ing = inventoryById.get(m.itemId);
+      const cost = (ing?.costPerUnit ?? 0) * m.quantity;
+      wasteCost += cost;
+      const entry = wasteByIngredient.get(m.itemId) ?? {
+        name: ing?.name ?? 'Unknown ingredient',
+        unit: ing?.unit ?? '',
+        quantity: 0,
+        cost: 0,
+      };
+      entry.quantity += m.quantity;
+      entry.cost += cost;
+      wasteByIngredient.set(m.itemId, entry);
+    });
+  const topWaste = Array.from(wasteByIngredient.values())
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 6);
+
+  const proration = PERIOD_DAYS[period] / 7;
+  const laborCost = appSettings.weeklyLaborCost * proration;
+  const operatingCost = appSettings.weeklyOperatingCosts * proration;
+  const netProfit = revenue - cogs - laborCost - operatingCost;
+
+  const staffOrdersValue = staffOrders.reduce((sum, o) => sum + o.total, 0);
+  const cancelledValue = cancelledOrders.reduce((sum, o) => sum + o.total, 0);
+
+  const recipeCostsByItem = new Map<string, RecipeCostRow[]>();
+  recipeCosts.forEach((r) => {
+    const list = recipeCostsByItem.get(r.menuItemId) ?? [];
+    list.push(r);
+    recipeCostsByItem.set(r.menuItemId, list);
+  });
+
+  const menuEngineering = menuItems
+    .map((item) => {
+      const qty = dishStats.get(item.id)?.qty ?? 0;
+      const rows = recipeCostsByItem.get(item.id) ?? [];
+      const defaultProtein = item.proteinOptions?.[0];
+      const cost = rows
+        .filter(
+          (r) =>
+            r.triggerType === 'base' ||
+            r.triggerType === 'rice_scoop' ||
+            (r.triggerType === 'protein' && r.triggerValue === defaultProtein)
+        )
+        .reduce((sum, r) => sum + (r.costPerUnit ?? 0) * r.quantity, 0);
+      return { item, qty, margin: item.price - cost, hasRecipe: rows.length > 0 };
+    })
+    .filter((r) => r.qty > 0);
+
+  const medPop = median(menuEngineering.map((r) => r.qty));
+  const medMargin = median(menuEngineering.map((r) => r.margin));
+  const quadrantOf = (qty: number, margin: number): MenuQuadrant => {
+    const popular = qty >= medPop;
+    const profitable = margin >= medMargin;
+    if (popular && profitable) return 'Star';
+    if (popular && !profitable) return 'Plowhorse';
+    if (!popular && profitable) return 'Puzzle';
+    return 'Dog';
+  };
+  const menuEngineeringRows = menuEngineering
+    .map((r) => ({ ...r, quadrant: quadrantOf(r.qty, r.margin) }))
+    .sort((a, b) => b.qty - a.qty);
+  const missingRecipeCount = menuEngineeringRows.filter((r) => !r.hasRecipe).length;
+
+  const exportSalesCsv = () => {
+    if (typeof document === 'undefined') return;
+    const rows = [
+      ['Date', 'Order ID', 'Address', 'Payment method', 'Source', 'Total (EUR)'],
+      ...revenueOrders.map((o) => [
+        new Date(o.placedAt).toLocaleString(),
+        o.id,
+        o.fulfillment.address ?? '',
+        o.paymentMethod,
+        o.source,
+        o.total.toFixed(2),
+      ]),
+    ];
+    const csv = rows
+      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `planetary-eats-sales-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.sectionContent}>
+      <View style={styles.privateBanner}>
+        <Text style={styles.privateBannerText}>
+          📊 Internal only — the business's own numbers, never shown to customers.
+        </Text>
+      </View>
+
+      <View style={styles.tabRow}>
+        {(Object.keys(PERIOD_LABELS) as DashboardPeriod[]).map((p) => (
+          <Pressable key={p} style={[styles.tab, period === p && styles.tabActive]} onPress={() => setPeriod(p)}>
+            <Text style={[styles.tabText, period === p && styles.tabTextActive]}>{PERIOD_LABELS[p]}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <Text style={typography.label}>SALES & EXECUTIVE SUMMARY</Text>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Revenue</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(revenue)}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Orders</Text>
+        <Text style={typography.bodyMuted}>{orderCount}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Average order value</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(aov)}</Text>
+      </View>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>TOP DISHES</Text>
+      {topDishes.length === 0 && <Text style={typography.bodyMuted}>No sales in this period yet.</Text>}
+      {topDishes.map((d) => (
+        <View key={d.name} style={styles.statRow}>
+          <Text style={[typography.body, { flex: 1 }]}>{d.name}</Text>
+          <Text style={typography.bodyMuted}>
+            {d.qty}× · {formatPrice(d.revenue)}
+          </Text>
+        </View>
+      ))}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        PROFIT &amp; LOSS
+      </Text>
+      <Text style={[typography.bodyMuted, { fontSize: 11, marginBottom: spacing.sm }]}>
+        Cost of goods is what was actually logged as "used" in Inventory during this period; labor and other
+        operating costs are prorated from the weekly figures in Settings → Operations.
+      </Text>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Revenue</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(revenue)}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>− Cost of goods (ingredients used)</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(cogs)}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>− Labor</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(laborCost)}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>− Other operating costs</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(operatingCost)}</Text>
+      </View>
+      <View style={[styles.statRow, { marginTop: spacing.xs }]}>
+        <Text style={[typography.body, { fontWeight: '700' }]}>Net profit</Text>
+        <Text style={{ fontWeight: '700', color: netProfit < 0 ? colors.danger : colors.forest }}>
+          {formatPrice(netProfit)}
+        </Text>
+      </View>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>MENU ENGINEERING</Text>
+      <Text style={[typography.bodyMuted, { fontSize: 11, marginBottom: spacing.sm }]}>
+        Stars sell well and pay well; Plowhorses sell well on thin margin; Puzzles are profitable but rarely
+        ordered; Dogs do neither.
+        {missingRecipeCount > 0
+          ? ` ${missingRecipeCount} of the dishes below have no recipe defined yet — their margin shows as full price until you set one up in Recipes.`
+          : ''}
+      </Text>
+      {menuEngineeringRows.length === 0 && <Text style={typography.bodyMuted}>No sales in this period yet.</Text>}
+      {menuEngineeringRows.length > 0 && (
+        <View style={styles.tableHeader}>
+          <Text style={[styles.tableCell, styles.tableHeaderText]}>Dish</Text>
+          <Text style={[styles.tableCell, styles.tableHeaderText]}>Sold</Text>
+          <Text style={[styles.tableCell, styles.tableHeaderText]}>Margin</Text>
+          <Text style={[styles.tableCell, styles.tableHeaderText]}>Type</Text>
+        </View>
+      )}
+      {menuEngineeringRows.map((r) => (
+        <View key={r.item.id} style={styles.tableRow}>
+          <Text style={styles.tableCell}>{r.item.name}</Text>
+          <Text style={styles.tableCell}>{r.qty}</Text>
+          <Text style={[styles.tableCell, { color: r.margin < 0 ? colors.danger : colors.ink }]}>
+            {formatPrice(r.margin)}
+          </Text>
+          <Text style={styles.tableCell}>{r.quadrant}</Text>
+        </View>
+      ))}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>WASTE</Text>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Total waste cost</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(wasteCost)}</Text>
+      </View>
+      {topWaste.map((w) => (
+        <View key={w.name} style={styles.statRow}>
+          <Text style={[typography.body, { flex: 1 }]}>{w.name}</Text>
+          <Text style={typography.bodyMuted}>
+            {formatQty(w.quantity)} {w.unit} · {formatPrice(w.cost)}
+          </Text>
+        </View>
+      ))}
+      {topWaste.length === 0 && <Text style={typography.bodyMuted}>Nothing logged as waste this period.</Text>}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        CANCELLED / RETURNED ORDERS
+      </Text>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Count</Text>
+        <Text style={typography.bodyMuted}>{cancelledOrders.length}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Value</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(cancelledValue)}</Text>
+      </View>
+      <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
+        Cancel or mark an order returned from the Orders tab — it shows up here automatically.
+      </Text>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        EMPLOYEE / PERSONAL ORDERS
+      </Text>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Count</Text>
+        <Text style={typography.bodyMuted}>{staffOrders.length}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Value given</Text>
+        <Text style={typography.bodyMuted}>{formatPrice(staffOrdersValue)}</Text>
+      </View>
+      <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
+        Log one from Orders → "Log an order" with source "Staff" — excluded from revenue and shown here instead.
+      </Text>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        SALES EXPORT
+      </Text>
+      <Text style={typography.bodyMuted}>
+        A CSV of this period's revenue orders, for importing into your accounting software (Lexoffice, sevDesk,
+        DATEV or similar all accept a plain CSV) — a direct live API connection needs picking a provider and its
+        API key, which is a decision (and credential) only you can make.
+      </Text>
+      <Pressable style={styles.saveButton} onPress={exportSalesCsv}>
+        <Text style={styles.saveButtonText}>Export {PERIOD_LABELS[period].toLowerCase()}'s sales (CSV)</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -2095,6 +2531,11 @@ const styles = StyleSheet.create({
   },
   sourceTag: {
     color: colors.clay,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  cancelledTag: {
+    color: colors.danger,
     fontWeight: '700',
     fontSize: 13,
   },

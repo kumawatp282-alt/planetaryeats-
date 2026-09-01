@@ -8,6 +8,7 @@ const LABELS: Record<OrderStatus, string> = {
   preparing: 'Preparing',
   out_for_delivery: 'Out for delivery',
   delivered: 'Delivered',
+  cancelled: 'Cancelled',
 };
 
 const COLORS: Record<OrderStatus, string> = {
@@ -15,6 +16,7 @@ const COLORS: Record<OrderStatus, string> = {
   preparing: colors.clay,
   out_for_delivery: colors.leaf,
   delivered: colors.forest,
+  cancelled: colors.danger,
 };
 
 export default function OrderStatusBadge({ status }: { status: OrderStatus }) {

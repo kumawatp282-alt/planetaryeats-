@@ -37,7 +37,7 @@ export default function OrdersScreen() {
             {order.fulfillment.method === 'delivery' ? 'Delivery' : 'Pickup'}
           </Text>
           <View style={styles.actionRow}>
-            {order.status !== 'delivered' && (
+            {order.status !== 'delivered' && order.status !== 'cancelled' && (
               <Pressable style={styles.advanceButton} onPress={() => advanceOrderStatus(order.id)}>
                 <Text style={styles.advanceText}>Simulate next status →</Text>
               </Pressable>
