@@ -5,7 +5,17 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { AdminMenuItem, AdminProfile, InventoryItem, InventoryMovement, Order, useStore } from '../context/StoreContext';
+import {
+  AdminMenuItem,
+  AdminProfile,
+  InventoryItem,
+  InventoryMovement,
+  Order,
+  RecipeIngredient,
+  RecipeTriggerType,
+  useStore,
+} from '../context/StoreContext';
+import { Nutrition } from '../data/menu';
 import AuthForm from '../components/AuthForm';
 import ReceiptView from '../components/ReceiptView';
 import MenuItemEditorModal from '../components/MenuItemEditorModal';
@@ -26,12 +36,13 @@ import {
   TRUE_COST_BY_VOLUME,
 } from '../data/businessData';
 
-type Section = 'settings' | 'menu' | 'inventory' | 'customers' | 'orders' | 'analytics' | 'business';
+type Section = 'settings' | 'menu' | 'inventory' | 'recipes' | 'customers' | 'orders' | 'analytics' | 'business';
 
 const SECTION_LABELS: Record<Section, string> = {
   settings: 'Settings',
   menu: 'Menu',
   inventory: 'Inventory',
+  recipes: 'Recipes',
   customers: 'Customers',
   orders: 'Orders',
   analytics: 'Analytics',
@@ -85,6 +96,7 @@ export default function AdminScreen() {
       {section === 'settings' && <SettingsSection />}
       {section === 'menu' && <MenuSection />}
       {section === 'inventory' && <InventorySection />}
+      {section === 'recipes' && <RecipesSection />}
       {section === 'customers' && <CustomersSection />}
       {section === 'orders' && <OrdersSection />}
       {section === 'analytics' && <AnalyticsSection />}
@@ -440,6 +452,11 @@ function InventoryRow({
   const [parLevel, setParLevel] = useState(String(item.parLevel));
   const [reorderThreshold, setReorderThreshold] = useState(String(item.reorderThreshold));
   const [notes, setNotes] = useState(item.notes ?? '');
+  const [caloriesPerUnit, setCaloriesPerUnit] = useState(item.caloriesPerUnit !== null ? String(item.caloriesPerUnit) : '');
+  const [proteinPerUnit, setProteinPerUnit] = useState(item.proteinPerUnit !== null ? String(item.proteinPerUnit) : '');
+  const [fiberPerUnit, setFiberPerUnit] = useState(item.fiberPerUnit !== null ? String(item.fiberPerUnit) : '');
+  const [carbsPerUnit, setCarbsPerUnit] = useState(item.carbsPerUnit !== null ? String(item.carbsPerUnit) : '');
+  const [fatPerUnit, setFatPerUnit] = useState(item.fatPerUnit !== null ? String(item.fatPerUnit) : '');
   const [message, setMessage] = useState<string | null>(null);
   const [logging, setLogging] = useState(false);
   const [moveType, setMoveType] = useState<InventoryMovement['type']>('used');
@@ -474,6 +491,11 @@ function InventoryRow({
       setMessage('Enter valid numbers for par level and reorder threshold.');
       return;
     }
+    const nutritionFields = [caloriesPerUnit, proteinPerUnit, fiberPerUnit, carbsPerUnit, fatPerUnit];
+    if (nutritionFields.some((v) => v.trim() && (!Number.isFinite(Number(v)) || Number(v) < 0))) {
+      setMessage('Per-unit nutrition values must be valid numbers, or left blank.');
+      return;
+    }
     setSaving(true);
     setMessage(null);
     const { error } = await upsertInventoryItem({
@@ -485,6 +507,11 @@ function InventoryRow({
       parLevel: parsedPar,
       reorderThreshold: parsedThreshold,
       notes: notes.trim() || null,
+      caloriesPerUnit: caloriesPerUnit.trim() ? Number(caloriesPerUnit) : null,
+      proteinPerUnit: proteinPerUnit.trim() ? Number(proteinPerUnit) : null,
+      fiberPerUnit: fiberPerUnit.trim() ? Number(fiberPerUnit) : null,
+      carbsPerUnit: carbsPerUnit.trim() ? Number(carbsPerUnit) : null,
+      fatPerUnit: fatPerUnit.trim() ? Number(fatPerUnit) : null,
     });
     setSaving(false);
     if (error) {
@@ -665,6 +692,65 @@ function InventoryRow({
               placeholderTextColor={colors.inkMuted}
             />
 
+            <Text style={[typography.label, { marginTop: spacing.md }]}>NUTRITION PER {unit.toUpperCase() || 'UNIT'}</Text>
+            <Text style={typography.bodyMuted}>
+              Optional — lets a dish's nutrition be computed from its recipe instead of typed in by hand.
+            </Text>
+            <View style={styles.inputRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { marginTop: spacing.sm, fontSize: 10 }]}>KCAL</Text>
+                <TextInput
+                  value={caloriesPerUnit}
+                  onChangeText={setCaloriesPerUnit}
+                  keyboardType="numeric"
+                  style={styles.input}
+                  placeholderTextColor={colors.inkMuted}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { marginTop: spacing.sm, fontSize: 10 }]}>PROTEIN (G)</Text>
+                <TextInput
+                  value={proteinPerUnit}
+                  onChangeText={setProteinPerUnit}
+                  keyboardType="numeric"
+                  style={styles.input}
+                  placeholderTextColor={colors.inkMuted}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { marginTop: spacing.sm, fontSize: 10 }]}>FIBER (G)</Text>
+                <TextInput
+                  value={fiberPerUnit}
+                  onChangeText={setFiberPerUnit}
+                  keyboardType="numeric"
+                  style={styles.input}
+                  placeholderTextColor={colors.inkMuted}
+                />
+              </View>
+            </View>
+            <View style={styles.inputRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { fontSize: 10 }]}>CARBS (G)</Text>
+                <TextInput
+                  value={carbsPerUnit}
+                  onChangeText={setCarbsPerUnit}
+                  keyboardType="numeric"
+                  style={[styles.input, { marginTop: 0 }]}
+                  placeholderTextColor={colors.inkMuted}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { fontSize: 10 }]}>FAT (G)</Text>
+                <TextInput
+                  value={fatPerUnit}
+                  onChangeText={setFatPerUnit}
+                  keyboardType="numeric"
+                  style={[styles.input, { marginTop: 0 }]}
+                  placeholderTextColor={colors.inkMuted}
+                />
+              </View>
+            </View>
+
             <Pressable style={styles.saveButton} onPress={saveDetails} disabled={saving}>
               <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save details'}</Text>
             </Pressable>
@@ -734,6 +820,11 @@ function InventorySection() {
       parLevel: parsedPar,
       reorderThreshold: parsedThreshold,
       notes: notes.trim() || null,
+      caloriesPerUnit: null,
+      proteinPerUnit: null,
+      fiberPerUnit: null,
+      carbsPerUnit: null,
+      fatPerUnit: null,
     });
     setSaving(false);
     if (error) {
@@ -959,6 +1050,389 @@ function InventorySection() {
           ))}
         </View>
       ))}
+    </ScrollView>
+  );
+}
+
+const TRIGGER_LABELS: Record<RecipeTriggerType, string> = {
+  base: 'ALWAYS USED',
+  rice_scoop: 'PER RICE SCOOP',
+  protein: 'BY PROTEIN CHOICE',
+  addon: 'BY ADD-ON',
+};
+
+function RecipesSection() {
+  const {
+    fetchAllMenuItemsAdmin,
+    fetchInventoryItems,
+    fetchRecipeForItem,
+    upsertRecipeIngredient,
+    deleteRecipeIngredient,
+    computeNutritionFromRecipe,
+    upsertMenuItem,
+  } = useStore();
+  const [menuItems, setMenuItems] = useState<AdminMenuItem[] | null>(null);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[] | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [recipe, setRecipe] = useState<RecipeIngredient[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [ingredientId, setIngredientId] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [triggerType, setTriggerType] = useState<RecipeTriggerType>('base');
+  const [triggerValue, setTriggerValue] = useState<string | null>(null);
+  const [addMessage, setAddMessage] = useState<string | null>(null);
+
+  const [computedNutrition, setComputedNutrition] = useState<Nutrition | null>(null);
+  const [computeMessage, setComputeMessage] = useState<string | null>(null);
+  const [computing, setComputing] = useState(false);
+
+  useEffect(() => {
+    fetchAllMenuItemsAdmin().then(setMenuItems);
+    fetchInventoryItems().then(setInventoryItems);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadRecipe = (itemId: string) => {
+    fetchRecipeForItem(itemId).then(setRecipe);
+  };
+
+  const selectItem = (itemId: string) => {
+    setSelectedItemId(itemId);
+    setRecipe(null);
+    setComputedNutrition(null);
+    setComputeMessage(null);
+    setAddMessage(null);
+    setIngredientId('');
+    setQuantity('');
+    setTriggerType('base');
+    setTriggerValue(null);
+    loadRecipe(itemId);
+  };
+
+  if (!menuItems || !inventoryItems) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  const selectedItem = menuItems.find((i) => i.id === selectedItemId) ?? null;
+  const ingredientById = new Map(inventoryItems.map((i) => [i.id, i]));
+  const ingredientCategories = Array.from(new Set(inventoryItems.map((i) => i.category))).sort();
+
+  const groupedItems = new Map<string, AdminMenuItem[]>();
+  menuItems.forEach((i) => {
+    const key = i.groupLabel ?? i.category;
+    const list = groupedItems.get(key) ?? [];
+    list.push(i);
+    groupedItems.set(key, list);
+  });
+
+  const recipeByTrigger: Record<RecipeTriggerType, RecipeIngredient[]> = {
+    base: [],
+    rice_scoop: [],
+    protein: [],
+    addon: [],
+  };
+  (recipe ?? []).forEach((r) => recipeByTrigger[r.triggerType].push(r));
+
+  const hasBase = Boolean(selectedItem?.proteinOptions && selectedItem.proteinOptions.length > 0);
+  const hasAddOns = Boolean(selectedItem?.addOns && selectedItem.addOns.length > 0);
+
+  const addRow = async () => {
+    if (!selectedItemId) return;
+    const parsedQty = Number(quantity);
+    if (!ingredientId) {
+      setAddMessage('Pick an ingredient.');
+      return;
+    }
+    if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
+      setAddMessage('Enter a quantity greater than 0.');
+      return;
+    }
+    setBusy(true);
+    setAddMessage(null);
+    const { error } = await upsertRecipeIngredient({
+      menuItemId: selectedItemId,
+      inventoryItemId: ingredientId,
+      quantity: parsedQty,
+      triggerType,
+      triggerValue,
+    });
+    setBusy(false);
+    if (error) {
+      setAddMessage(error);
+      return;
+    }
+    setIngredientId('');
+    setQuantity('');
+    loadRecipe(selectedItemId);
+  };
+
+  const removeRow = async (id: string) => {
+    setBusy(true);
+    await deleteRecipeIngredient(id);
+    setBusy(false);
+    if (selectedItemId) loadRecipe(selectedItemId);
+  };
+
+  const runCompute = async () => {
+    if (!selectedItemId) return;
+    setComputing(true);
+    setComputeMessage(null);
+    const result = await computeNutritionFromRecipe(selectedItemId, selectedItem?.proteinOptions?.[0]);
+    setComputing(false);
+    if (!result) {
+      setComputeMessage("Couldn't compute — add some recipe ingredients first.");
+      return;
+    }
+    setComputedNutrition(result);
+  };
+
+  const saveNutrition = async () => {
+    if (!selectedItem || !computedNutrition) return;
+    setBusy(true);
+    setComputeMessage(null);
+    const { error } = await upsertMenuItem({
+      id: selectedItem.id,
+      name: selectedItem.name,
+      description: selectedItem.description,
+      price: selectedItem.price,
+      category: selectedItem.category,
+      emoji: selectedItem.emoji,
+      imageUrl: selectedItem.imageUrl,
+      tags: selectedItem.tags ?? [],
+      allergens: selectedItem.allergens ?? [],
+      ingredients: selectedItem.ingredients ?? null,
+      proteinOptions: selectedItem.proteinOptions ?? null,
+      addOns: selectedItem.addOns ?? null,
+      origin: selectedItem.origin ?? null,
+      nutrition: computedNutrition,
+      groupId: selectedItem.groupId ?? null,
+      groupLabel: selectedItem.groupLabel ?? null,
+      isActive: selectedItem.isActive,
+      sortOrder: selectedItem.sortOrder,
+    });
+    setBusy(false);
+    if (error) {
+      setComputeMessage(error);
+      return;
+    }
+    setComputeMessage("Saved as this dish's nutrition.");
+    fetchAllMenuItemsAdmin().then(setMenuItems);
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.sectionContent}>
+      <View style={styles.privateBanner}>
+        <Text style={styles.privateBannerText}>
+          🧾 Internal only — recipe composition, never shown to customers. Once a dish has a recipe, placing an order
+          for it automatically deducts its ingredients from Inventory.
+        </Text>
+      </View>
+
+      <Text style={typography.label}>PICK A DISH</Text>
+      {Array.from(groupedItems.keys())
+        .sort()
+        .map((groupKey) => (
+          <View key={groupKey}>
+            <Text style={[typography.label, { marginTop: spacing.md, marginBottom: spacing.xs, fontSize: 11 }]}>
+              {groupKey.toUpperCase()}
+            </Text>
+            <View style={styles.chipRow}>
+              {(groupedItems.get(groupKey) ?? []).map((i) => (
+                <Pressable
+                  key={i.id}
+                  style={[styles.chip, selectedItemId === i.id && styles.chipActive]}
+                  onPress={() => selectItem(i.id)}
+                >
+                  <Text style={[styles.chipText, selectedItemId === i.id && styles.chipTextActive]}>{i.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ))}
+
+      {selectedItem && (
+        <View style={{ marginTop: spacing.lg }}>
+          <Text style={typography.h3}>{selectedItem.name}</Text>
+
+          {(['base', 'rice_scoop', 'protein', 'addon'] as RecipeTriggerType[]).map((t) => {
+            if (t === 'rice_scoop' && !hasBase) return null;
+            if (t === 'protein' && !hasBase) return null;
+            if (t === 'addon' && !hasAddOns) return null;
+            const rows = recipeByTrigger[t];
+            return (
+              <View key={t} style={{ marginTop: spacing.md }}>
+                <Text style={[typography.label, { fontSize: 11 }]}>{TRIGGER_LABELS[t]}</Text>
+                {rows.length === 0 && (
+                  <Text style={[typography.bodyMuted, { marginTop: 4 }]}>Nothing added yet.</Text>
+                )}
+                {rows.map((r) => {
+                  const ing = ingredientById.get(r.inventoryItemId);
+                  return (
+                    <View key={r.id} style={styles.statRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={typography.body}>
+                          {ing?.name ?? 'Unknown ingredient'}
+                          {t === 'addon' && r.triggerValue
+                            ? ` — ${selectedItem.addOns?.find((a) => a.id === r.triggerValue)?.name ?? r.triggerValue}`
+                            : t === 'protein' && r.triggerValue
+                            ? ` — ${r.triggerValue}`
+                            : ''}
+                        </Text>
+                        <Text style={typography.bodyMuted}>
+                          {formatQty(r.quantity)} {ing?.unit ?? ''}
+                          {t === 'rice_scoop' ? ' per scoop' : ''}
+                        </Text>
+                      </View>
+                      <Pressable style={[styles.smallButton, styles.banButton]} onPress={() => removeRow(r.id)}>
+                        <Text style={styles.smallButtonText}>✕</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })}
+
+          <Text style={[typography.label, { marginTop: spacing.lg }]}>ADD INGREDIENT TO RECIPE</Text>
+          <Text style={[typography.bodyMuted, { fontSize: 11 }]}>INGREDIENT</Text>
+          {ingredientCategories.map((cat) => (
+            <View key={cat}>
+              <Text style={[typography.bodyMuted, { fontSize: 10, marginTop: spacing.xs }]}>{cat}</Text>
+              <View style={styles.chipRow}>
+                {inventoryItems
+                  .filter((i) => i.category === cat)
+                  .map((i) => (
+                    <Pressable
+                      key={i.id}
+                      style={[styles.chip, ingredientId === i.id && styles.chipActive]}
+                      onPress={() => setIngredientId(i.id)}
+                    >
+                      <Text style={[styles.chipText, ingredientId === i.id && styles.chipTextActive]}>{i.name}</Text>
+                    </Pressable>
+                  ))}
+              </View>
+            </View>
+          ))}
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>
+            QUANTITY{ingredientId ? ` (${ingredientById.get(ingredientId)?.unit})` : ''}
+          </Text>
+          <TextInput
+            value={quantity}
+            onChangeText={setQuantity}
+            keyboardType="numeric"
+            style={styles.input}
+            placeholder="0"
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>APPLIES</Text>
+          <View style={styles.chipRow}>
+            <Pressable
+              style={[styles.chip, triggerType === 'base' && styles.chipActive]}
+              onPress={() => {
+                setTriggerType('base');
+                setTriggerValue(null);
+              }}
+            >
+              <Text style={[styles.chipText, triggerType === 'base' && styles.chipTextActive]}>Always</Text>
+            </Pressable>
+            {hasBase && (
+              <Pressable
+                style={[styles.chip, triggerType === 'rice_scoop' && styles.chipActive]}
+                onPress={() => {
+                  setTriggerType('rice_scoop');
+                  setTriggerValue(null);
+                }}
+              >
+                <Text style={[styles.chipText, triggerType === 'rice_scoop' && styles.chipTextActive]}>
+                  Per rice scoop
+                </Text>
+              </Pressable>
+            )}
+            {(selectedItem.proteinOptions ?? []).map((p) => (
+              <Pressable
+                key={p}
+                style={[styles.chip, triggerType === 'protein' && triggerValue === p && styles.chipActive]}
+                onPress={() => {
+                  setTriggerType('protein');
+                  setTriggerValue(p);
+                }}
+              >
+                <Text
+                  style={[styles.chipText, triggerType === 'protein' && triggerValue === p && styles.chipTextActive]}
+                >
+                  Protein: {p}
+                </Text>
+              </Pressable>
+            ))}
+            {(selectedItem.addOns ?? []).map((a) => (
+              <Pressable
+                key={a.id}
+                style={[styles.chip, triggerType === 'addon' && triggerValue === a.id && styles.chipActive]}
+                onPress={() => {
+                  setTriggerType('addon');
+                  setTriggerValue(a.id);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    triggerType === 'addon' && triggerValue === a.id && styles.chipTextActive,
+                  ]}
+                >
+                  Add-on: {a.name}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Pressable style={styles.saveButton} onPress={addRow} disabled={busy}>
+            <Text style={styles.saveButtonText}>{busy ? '…' : '+ Add to recipe'}</Text>
+          </Pressable>
+          {addMessage && <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>{addMessage}</Text>}
+
+          <Text style={[typography.label, { marginTop: spacing.xl }]}>NUTRITION FROM RECIPE</Text>
+          <Text style={typography.bodyMuted}>
+            Sums "always used" + "per rice scoop" (at 1 scoop) + the {selectedItem.proteinOptions?.[0] ?? 'default'}{' '}
+            protein ingredients — the same basis as "estimated for the default protein choice" on the dish's own
+            page.
+          </Text>
+          <Pressable style={styles.smallButton} onPress={runCompute} disabled={computing}>
+            <Text style={styles.smallButtonText}>{computing ? 'Computing…' : 'Compute'}</Text>
+          </Pressable>
+
+          {computedNutrition && (
+            <View style={{ marginTop: spacing.sm }}>
+              <View style={styles.statRow}>
+                <Text style={typography.body}>Calories</Text>
+                <Text style={typography.bodyMuted}>{computedNutrition.calories} kcal</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={typography.body}>Protein</Text>
+                <Text style={typography.bodyMuted}>{computedNutrition.protein} g</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={typography.body}>Fiber</Text>
+                <Text style={typography.bodyMuted}>{computedNutrition.fiber} g</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={typography.body}>Carbs</Text>
+                <Text style={typography.bodyMuted}>{computedNutrition.carbs} g</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={typography.body}>Fat</Text>
+                <Text style={typography.bodyMuted}>{computedNutrition.fat} g</Text>
+              </View>
+              <Pressable style={styles.saveButton} onPress={saveNutrition} disabled={busy}>
+                <Text style={styles.saveButtonText}>{busy ? 'Saving…' : "Save as this dish's nutrition"}</Text>
+              </Pressable>
+            </View>
+          )}
+          {computeMessage && <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>{computeMessage}</Text>}
+        </View>
+      )}
     </ScrollView>
   );
 }

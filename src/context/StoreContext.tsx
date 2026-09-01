@@ -128,6 +128,14 @@ export interface InventoryItem {
   reorderThreshold: number;
   notes: string | null;
   updatedAt: string;
+  // Per one unit of this ingredient (e.g. per kg, per pcs) — lets a dish's
+  // nutrition be computed from its recipe instead of typed in by hand.
+  // null means "not entered yet", not zero.
+  caloriesPerUnit: number | null;
+  proteinPerUnit: number | null;
+  fiberPerUnit: number | null;
+  carbsPerUnit: number | null;
+  fatPerUnit: number | null;
 }
 
 export interface InventoryItemInput {
@@ -139,6 +147,11 @@ export interface InventoryItemInput {
   parLevel: number;
   reorderThreshold: number;
   notes: string | null;
+  caloriesPerUnit: number | null;
+  proteinPerUnit: number | null;
+  fiberPerUnit: number | null;
+  carbsPerUnit: number | null;
+  fatPerUnit: number | null;
 }
 
 // A logged stock change — what actually moved, not just the running total.
@@ -152,6 +165,31 @@ export interface InventoryMovement {
   quantity: number;
   note: string | null;
   createdAt: string;
+}
+
+// One ingredient use in a dish's recipe, gated by when it applies — see
+// supabase/recipe_schema.sql for the full model. A database trigger reads
+// these (as the table owner, not the ordering customer) to auto-deduct
+// inventory whenever an order lands; the admin panel also reads them to
+// compute a dish's nutrition from what's actually in it.
+export type RecipeTriggerType = 'base' | 'protein' | 'addon' | 'rice_scoop';
+
+export interface RecipeIngredient {
+  id: string;
+  menuItemId: string;
+  inventoryItemId: string;
+  quantity: number;
+  triggerType: RecipeTriggerType;
+  triggerValue: string | null;
+}
+
+export interface RecipeIngredientInput {
+  id?: string; // present -> update, absent -> insert
+  menuItemId: string;
+  inventoryItemId: string;
+  quantity: number;
+  triggerType: RecipeTriggerType;
+  triggerValue: string | null;
 }
 
 // What the editor form actually submits — a plain, JSON-shaped version of
@@ -396,6 +434,15 @@ interface StoreContextValue extends StoreState {
     currentStock: number,
     note?: string
   ) => Promise<{ error: string | null }>;
+  fetchRecipeForItem: (menuItemId: string) => Promise<RecipeIngredient[]>;
+  upsertRecipeIngredient: (input: RecipeIngredientInput) => Promise<{ error: string | null }>;
+  deleteRecipeIngredient: (id: string) => Promise<{ error: string | null }>;
+  // Sums each recipe ingredient's per-unit nutrition — 'base' and
+  // 'rice_scoop' (at 1 scoop) always count; 'protein' only counts for
+  // defaultProtein (typically the dish's first protein option, matching
+  // "estimated for the default protein choice" elsewhere); 'addon' never
+  // counts, since add-ons aren't included in a dish's base nutrition figure.
+  computeNutritionFromRecipe: (menuItemId: string, defaultProtein?: string) => Promise<Nutrition | null>;
   // Customer's own private nutrition tracking — scoped to the signed-in
   // user by RLS; the business never reads these.
   fetchNutritionLog: (isoDate: string) => Promise<NutritionEntry[]>;
@@ -444,6 +491,10 @@ function rowToAdminMenuItem(row: any): AdminMenuItem {
   };
 }
 
+function nullableNum(v: unknown): number | null {
+  return v === null || v === undefined ? null : Number(v);
+}
+
 function rowToInventoryItem(row: any): InventoryItem {
   return {
     id: row.id,
@@ -455,6 +506,22 @@ function rowToInventoryItem(row: any): InventoryItem {
     reorderThreshold: Number(row.reorder_threshold),
     notes: row.notes ?? null,
     updatedAt: row.updated_at,
+    caloriesPerUnit: nullableNum(row.calories_per_unit),
+    proteinPerUnit: nullableNum(row.protein_per_unit),
+    fiberPerUnit: nullableNum(row.fiber_per_unit),
+    carbsPerUnit: nullableNum(row.carbs_per_unit),
+    fatPerUnit: nullableNum(row.fat_per_unit),
+  };
+}
+
+function rowToRecipeIngredient(row: any): RecipeIngredient {
+  return {
+    id: row.id,
+    menuItemId: row.menu_item_id,
+    inventoryItemId: row.inventory_item_id,
+    quantity: Number(row.quantity),
+    triggerType: row.trigger_type,
+    triggerValue: row.trigger_value ?? null,
   };
 }
 
@@ -799,6 +866,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           par_level: input.parLevel,
           reorder_threshold: input.reorderThreshold,
           notes: input.notes,
+          calories_per_unit: input.caloriesPerUnit,
+          protein_per_unit: input.proteinPerUnit,
+          fiber_per_unit: input.fiberPerUnit,
+          carbs_per_unit: input.carbsPerUnit,
+          fat_per_unit: input.fatPerUnit,
           updated_at: new Date().toISOString(),
         };
         const { error } = input.id
@@ -845,6 +917,62 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .update({ current_stock: newStock, updated_at: new Date().toISOString() })
           .eq('id', itemId);
         return { error: updateError?.message ?? null };
+      },
+      fetchRecipeForItem: async (menuItemId) => {
+        const { data, error } = await supabase
+          .from('recipe_ingredients')
+          .select('*')
+          .eq('menu_item_id', menuItemId);
+        if (error || !data) return [];
+        return data.map(rowToRecipeIngredient);
+      },
+      upsertRecipeIngredient: async (input) => {
+        const payload = {
+          menu_item_id: input.menuItemId,
+          inventory_item_id: input.inventoryItemId,
+          quantity: input.quantity,
+          trigger_type: input.triggerType,
+          trigger_value: input.triggerValue,
+          updated_at: new Date().toISOString(),
+        };
+        const { error } = input.id
+          ? await supabase.from('recipe_ingredients').update(payload).eq('id', input.id)
+          : await supabase.from('recipe_ingredients').insert(payload);
+        return { error: error?.message ?? null };
+      },
+      deleteRecipeIngredient: async (id) => {
+        const { error } = await supabase.from('recipe_ingredients').delete().eq('id', id);
+        return { error: error?.message ?? null };
+      },
+      computeNutritionFromRecipe: async (menuItemId, defaultProtein) => {
+        const { data, error } = await supabase
+          .from('recipe_ingredients')
+          .select(
+            'quantity, trigger_type, trigger_value, inventory_items(calories_per_unit, protein_per_unit, fiber_per_unit, carbs_per_unit, fat_per_unit)'
+          )
+          .eq('menu_item_id', menuItemId);
+        if (error || !data) return null;
+        const totals = { calories: 0, protein: 0, fiber: 0, carbs: 0, fat: 0 };
+        data.forEach((row: any) => {
+          const applies =
+            row.trigger_type === 'base' ||
+            row.trigger_type === 'rice_scoop' ||
+            (row.trigger_type === 'protein' && row.trigger_value === defaultProtein);
+          const inv = row.inventory_items;
+          if (!applies || !inv) return;
+          totals.calories += (Number(inv.calories_per_unit) || 0) * row.quantity;
+          totals.protein += (Number(inv.protein_per_unit) || 0) * row.quantity;
+          totals.fiber += (Number(inv.fiber_per_unit) || 0) * row.quantity;
+          totals.carbs += (Number(inv.carbs_per_unit) || 0) * row.quantity;
+          totals.fat += (Number(inv.fat_per_unit) || 0) * row.quantity;
+        });
+        return {
+          calories: Math.round(totals.calories),
+          protein: Math.round(totals.protein),
+          fiber: Math.round(totals.fiber),
+          carbs: Math.round(totals.carbs),
+          fat: Math.round(totals.fat),
+        };
       },
       fetchNutritionLog: async (isoDate) => {
         if (!user) return [];
