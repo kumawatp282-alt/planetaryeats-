@@ -4,6 +4,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { StoreProvider } from '../context/StoreContext';
 import { AuthProvider } from '../context/AuthContext';
+import { EmployeeAuthProvider } from '../context/EmployeeAuthContext';
 import { colors } from '../constants/theme';
 import SplashOverlay from '../components/SplashOverlay';
 import AppHeader from '../components/AppHeader';
@@ -29,33 +30,37 @@ export default function RootLayout() {
   usePrintStylesheet();
 
   return (
-    <AuthProvider>
-      <StoreProvider>
-        <StatusBar style="dark" />
-        <SplashOverlay />
-        <View style={{ flex: 1, backgroundColor: colors.cream }}>
-          <AppHeader />
-          <View style={{ flex: 1 }}>
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: colors.cream },
-              }}
-            >
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="item/[id]" options={{ presentation: 'modal' }} />
-              <Stack.Screen name="checkout" />
-              <Stack.Screen name="shop" />
-              <Stack.Screen name="order-confirmation" options={{ gestureEnabled: false }} />
-              <Stack.Screen name="admin" />
-              <Stack.Screen name="receipt/[orderId]" />
-              <Stack.Screen name="impressum" />
-              <Stack.Screen name="datenschutz" />
-              <Stack.Screen name="nutrition" />
-            </Stack>
+    <EmployeeAuthProvider>
+      <AuthProvider>
+        <StoreProvider>
+          <StatusBar style="dark" />
+          <SplashOverlay />
+          <View style={{ flex: 1, backgroundColor: colors.cream }}>
+            <AppHeader />
+            <View style={{ flex: 1 }}>
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: colors.cream },
+                }}
+              >
+                <Stack.Screen name="(tabs)" />
+                <Stack.Screen name="item/[id]" options={{ presentation: 'modal' }} />
+                <Stack.Screen name="checkout" />
+                <Stack.Screen name="shop" />
+                <Stack.Screen name="order-confirmation" options={{ gestureEnabled: false }} />
+                <Stack.Screen name="admin" />
+                <Stack.Screen name="receipt/[orderId]" />
+                <Stack.Screen name="impressum" />
+                <Stack.Screen name="datenschutz" />
+                <Stack.Screen name="nutrition" />
+                <Stack.Screen name="staff" />
+                <Stack.Screen name="rider" />
+              </Stack>
+            </View>
           </View>
-        </View>
-      </StoreProvider>
-    </AuthProvider>
+        </StoreProvider>
+      </AuthProvider>
+    </EmployeeAuthProvider>
   );
 }

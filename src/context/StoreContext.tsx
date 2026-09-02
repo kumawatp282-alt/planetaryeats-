@@ -55,6 +55,10 @@ export interface Order {
   placedAt: string; // ISO timestamp
   source: string; // 'website' (default) | 'lieferando' | 'phone' | 'walk-in' | 'staff' | ...
   cancellationReason: string | null;
+  riderId: string | null;
+  pickedUpAt: string | null;
+  deliveredAt: string | null;
+  employeeId: string | null; // who logged this as a staff/personal order
 }
 
 // A single thing the customer ate that didn't come from a Planetary Eats
@@ -109,6 +113,26 @@ export interface AdminProfile {
   banned: boolean;
   createdAt: string;
   birthYear: number | null;
+}
+
+// Kitchen staff / rider roster, managed here by the admin (real Supabase
+// Auth + is_admin RLS). The kiosk login itself is a completely separate,
+// code-based mechanism — see context/EmployeeAuthContext.tsx — that never
+// reads this table directly, only through security-definer RPCs.
+export interface AdminEmployee {
+  id: string;
+  name: string;
+  role: 'kitchen' | 'rider';
+  hourlyRate: number;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface EmployeeShiftRecord {
+  id: string;
+  employeeId: string;
+  clockIn: string;
+  clockOut: string | null;
 }
 
 // Everything a MenuItem has, plus the admin-only bookkeeping fields the
@@ -441,6 +465,16 @@ interface StoreContextValue extends StoreState {
   setUserBanned: (userId: string, banned: boolean) => Promise<{ error: string | null }>;
   setUserAdmin: (userId: string, isAdmin: boolean) => Promise<{ error: string | null }>;
   setUserAdminByEmail: (email: string, isAdmin: boolean) => Promise<{ error: string | null }>;
+  fetchEmployees: () => Promise<AdminEmployee[]>;
+  createEmployee: (input: {
+    name: string;
+    role: 'kitchen' | 'rider';
+    hourlyRate: number;
+    codeHash: string;
+  }) => Promise<{ error: string | null }>;
+  regenerateEmployeeCode: (id: string, codeHash: string) => Promise<{ error: string | null }>;
+  setEmployeeActive: (id: string, active: boolean) => Promise<{ error: string | null }>;
+  fetchEmployeeShifts: () => Promise<EmployeeShiftRecord[]>;
   fetchAllMenuItemsAdmin: () => Promise<AdminMenuItem[]>;
   upsertMenuItem: (input: MenuItemInput) => Promise<{ error: string | null }>;
   setMenuItemActive: (id: string, active: boolean) => Promise<{ error: string | null }>;
@@ -499,6 +533,10 @@ function rowToOrder(row: any): Order {
     placedAt: row.placed_at,
     source: row.source ?? 'website',
     cancellationReason: row.cancellation_reason ?? null,
+    riderId: row.rider_id ?? null,
+    pickedUpAt: row.picked_up_at ?? null,
+    deliveredAt: row.delivered_at ?? null,
+    employeeId: row.employee_id ?? null,
   };
 }
 
@@ -510,6 +548,26 @@ function rowToAdminProfile(row: any): AdminProfile {
     banned: Boolean(row.banned),
     createdAt: row.created_at,
     birthYear: row.birth_year ?? null,
+  };
+}
+
+function rowToAdminEmployee(row: any): AdminEmployee {
+  return {
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    hourlyRate: Number(row.hourly_rate),
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+  };
+}
+
+function rowToEmployeeShiftRecord(row: any): EmployeeShiftRecord {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    clockIn: row.clock_in,
+    clockOut: row.clock_out ?? null,
   };
 }
 
@@ -724,6 +782,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           placedAt: new Date().toISOString(),
           source: 'website',
           cancellationReason: null,
+          riderId: null,
+          pickedUpAt: null,
+          deliveredAt: null,
+          employeeId: null,
         };
         const { error } = await supabase.from('orders').insert({
           id: order.id,
@@ -852,6 +914,39 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (!data) return { error: 'No account found with that email — they need to sign up first.' };
         const { error } = await supabase.from('profiles').update({ is_admin: isAdminValue }).eq('id', data.id);
         return { error: error?.message ?? null };
+      },
+      fetchEmployees: async () => {
+        const { data, error } = await supabase
+          .from('employees')
+          .select('id, name, role, hourly_rate, active, created_at')
+          .order('created_at', { ascending: false });
+        if (error || !data) return [];
+        return data.map(rowToAdminEmployee);
+      },
+      createEmployee: async (input) => {
+        const { error } = await supabase.from('employees').insert({
+          name: input.name,
+          role: input.role,
+          hourly_rate: input.hourlyRate,
+          code_hash: input.codeHash,
+        });
+        return { error: error?.message ?? null };
+      },
+      regenerateEmployeeCode: async (id, codeHash) => {
+        const { error } = await supabase.from('employees').update({ code_hash: codeHash }).eq('id', id);
+        return { error: error?.message ?? null };
+      },
+      setEmployeeActive: async (id, active) => {
+        const { error } = await supabase.from('employees').update({ active }).eq('id', id);
+        return { error: error?.message ?? null };
+      },
+      fetchEmployeeShifts: async () => {
+        const { data, error } = await supabase
+          .from('employee_shifts')
+          .select('*')
+          .order('clock_in', { ascending: false });
+        if (error || !data) return [];
+        return data.map(rowToEmployeeShiftRecord);
       },
       fetchAllMenuItemsAdmin: async () => {
         const { data, error } = await supabase

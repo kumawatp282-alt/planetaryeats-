@@ -6,8 +6,10 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import {
+  AdminEmployee,
   AdminMenuItem,
   AdminProfile,
+  EmployeeShiftRecord,
   InventoryItem,
   InventoryMovement,
   lineUnitPrice,
@@ -17,6 +19,7 @@ import {
   RecipeTriggerType,
   useStore,
 } from '../context/StoreContext';
+import { hashEmployeeCode } from '../context/EmployeeAuthContext';
 import { Nutrition } from '../data/menu';
 import AuthForm from '../components/AuthForm';
 import ReceiptView from '../components/ReceiptView';
@@ -44,6 +47,7 @@ type Section =
   | 'menu'
   | 'inventory'
   | 'recipes'
+  | 'team'
   | 'customers'
   | 'orders'
   | 'analytics'
@@ -55,6 +59,7 @@ const SECTION_LABELS: Record<Section, string> = {
   menu: 'Menu',
   inventory: 'Inventory',
   recipes: 'Recipes',
+  team: 'Team',
   customers: 'Customers',
   orders: 'Orders',
   analytics: 'Analytics',
@@ -110,6 +115,7 @@ export default function AdminScreen() {
       {section === 'menu' && <MenuSection />}
       {section === 'inventory' && <InventorySection />}
       {section === 'recipes' && <RecipesSection />}
+      {section === 'team' && <TeamSection />}
       {section === 'customers' && <CustomersSection />}
       {section === 'orders' && <OrdersSection />}
       {section === 'analytics' && <AnalyticsSection />}
@@ -1504,6 +1510,216 @@ function RecipesSection() {
   );
 }
 
+function generateEmployeeCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function TeamSection() {
+  const { fetchEmployees, createEmployee, regenerateEmployeeCode, setEmployeeActive, fetchEmployeeShifts, fetchAllOrders } =
+    useStore();
+  const [employees, setEmployees] = useState<AdminEmployee[] | null>(null);
+  const [shifts, setShifts] = useState<EmployeeShiftRecord[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [name, setName] = useState('');
+  const [role, setRole] = useState<'kitchen' | 'rider'>('kitchen');
+  const [hourlyRate, setHourlyRate] = useState('0');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = () => {
+    fetchEmployees().then(setEmployees);
+    fetchEmployeeShifts().then(setShifts);
+    fetchAllOrders().then(setOrders);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addEmployee = async () => {
+    if (!name.trim()) {
+      setMessage('Enter a name.');
+      return;
+    }
+    const parsedRate = Number(hourlyRate);
+    if (!Number.isFinite(parsedRate) || parsedRate < 0) {
+      setMessage('Enter a valid hourly rate.');
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    const code = generateEmployeeCode();
+    const codeHash = await hashEmployeeCode(code);
+    const { error } = await createEmployee({ name: name.trim(), role, hourlyRate: parsedRate, codeHash });
+    setSaving(false);
+    if (error) {
+      setMessage(error);
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.alert(`${name.trim()}'s login code is ${code} — write it down now, it won't be shown again.`);
+    }
+    setName('');
+    setHourlyRate('0');
+    setShowAddForm(false);
+    load();
+  };
+
+  const regenerate = async (employee: AdminEmployee) => {
+    setSaving(true);
+    setMessage(null);
+    const code = generateEmployeeCode();
+    const codeHash = await hashEmployeeCode(code);
+    const { error } = await regenerateEmployeeCode(employee.id, codeHash);
+    setSaving(false);
+    if (error) {
+      setMessage(error);
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.alert(`${employee.name}'s new login code is ${code} — write it down now, it won't be shown again.`);
+    }
+  };
+
+  const toggleActive = async (employee: AdminEmployee) => {
+    setSaving(true);
+    await setEmployeeActive(employee.id, !employee.active);
+    setSaving(false);
+    load();
+  };
+
+  if (!employees) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  const shiftsByEmployee = new Map<string, EmployeeShiftRecord[]>();
+  shifts.forEach((s) => {
+    const list = shiftsByEmployee.get(s.employeeId) ?? [];
+    list.push(s);
+    shiftsByEmployee.set(s.employeeId, list);
+  });
+
+  const deliveriesByRider = new Map<string, Order[]>();
+  orders
+    .filter((o) => o.riderId && o.deliveredAt)
+    .forEach((o) => {
+      const list = deliveriesByRider.get(o.riderId as string) ?? [];
+      list.push(o);
+      deliveriesByRider.set(o.riderId as string, list);
+    });
+
+  return (
+    <ScrollView contentContainerStyle={styles.sectionContent}>
+      <View style={styles.privateBanner}>
+        <Text style={styles.privateBannerText}>
+          👤 Internal only — staff/rider roster and login codes, never shown to customers. A code is only ever shown
+          once, right when you create or regenerate it — write it down immediately, it can't be looked up again.
+        </Text>
+      </View>
+
+      <Pressable style={styles.saveButton} onPress={() => setShowAddForm(!showAddForm)}>
+        <Text style={styles.saveButtonText}>{showAddForm ? 'Cancel' : '+ Add employee'}</Text>
+      </Pressable>
+
+      {showAddForm && (
+        <View style={{ marginTop: spacing.md }}>
+          <Text style={typography.label}>NAME</Text>
+          <TextInput value={name} onChangeText={setName} style={styles.input} placeholderTextColor={colors.inkMuted} />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>ROLE</Text>
+          <View style={styles.chipRow}>
+            {(['kitchen', 'rider'] as const).map((r) => (
+              <Pressable key={r} style={[styles.chip, role === r && styles.chipActive]} onPress={() => setRole(r)}>
+                <Text style={[styles.chipText, role === r && styles.chipTextActive]}>
+                  {r === 'kitchen' ? 'Kitchen staff' : 'Rider'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>HOURLY RATE (€)</Text>
+          <TextInput
+            value={hourlyRate}
+            onChangeText={setHourlyRate}
+            keyboardType="numeric"
+            style={styles.input}
+            placeholder="0"
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Pressable style={styles.saveButton} onPress={addEmployee} disabled={saving}>
+            <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Create + generate code'}</Text>
+          </Pressable>
+          {message && <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>{message}</Text>}
+        </View>
+      )}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>ROSTER</Text>
+      {employees.length === 0 && <Text style={typography.bodyMuted}>No employees yet.</Text>}
+      {employees.map((e) => {
+        const empShifts = shiftsByEmployee.get(e.id) ?? [];
+        const totalHours =
+          empShifts.reduce(
+            (sum, s) => sum + (s.clockOut ? new Date(s.clockOut).getTime() - new Date(s.clockIn).getTime() : 0),
+            0
+          ) / 3600000;
+        const deliveries = deliveriesByRider.get(e.id) ?? [];
+        const avgDeliveryMin =
+          deliveries.length > 0
+            ? deliveries.reduce(
+                (sum, o) =>
+                  sum +
+                  (new Date(o.deliveredAt as string).getTime() -
+                    new Date(o.pickedUpAt ?? o.placedAt).getTime()),
+                0
+              ) /
+              deliveries.length /
+              60000
+            : null;
+        return (
+          <View key={e.id} style={[styles.rowCard, !e.active && styles.rowCardHidden]}>
+            <View style={{ flex: 1 }}>
+              <Text style={typography.body}>
+                {e.name}
+                {!e.active ? ' · Inactive' : ''}
+              </Text>
+              <Text style={typography.bodyMuted}>
+                {e.role === 'kitchen' ? 'Kitchen staff' : 'Rider'} · {formatPrice(e.hourlyRate)}/hr
+              </Text>
+              <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
+                {e.role === 'kitchen'
+                  ? `${totalHours.toFixed(1)}h logged all-time`
+                  : `${deliveries.length} deliveries${
+                      avgDeliveryMin !== null ? ` · avg ${avgDeliveryMin.toFixed(0)} min` : ''
+                    }`}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+              <Pressable style={styles.smallButton} onPress={() => regenerate(e)} disabled={saving}>
+                <Text style={styles.smallButtonText}>New code</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.smallButton, e.active ? styles.banButton : styles.unbanButton]}
+                onPress={() => toggleActive(e)}
+                disabled={saving}
+              >
+                <Text style={styles.smallButtonText}>{e.active ? 'Deactivate' : 'Reactivate'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        );
+      })}
+
+      <Text style={[typography.bodyMuted, { fontSize: 11, marginTop: spacing.md }]}>
+        Staff sign in at planetaryeats.com/staff (kitchen) or /rider (riders) with the code you give them — those
+        pages are separate from this admin panel and from customer sign-in.
+      </Text>
+    </ScrollView>
+  );
+}
+
 function CustomersSection() {
   const { user } = useAuth();
   const { fetchAllProfiles, setUserBanned, setUserAdmin, setUserAdminByEmail } = useStore();
@@ -1827,6 +2043,8 @@ function DashboardSection() {
     fetchInventoryMovements,
     fetchAllRecipeCosts,
     fetchAllMenuItemsAdmin,
+    fetchEmployees,
+    fetchEmployeeShifts,
     appSettings,
   } = useStore();
   const [orders, setOrders] = useState<Order[] | null>(null);
@@ -1834,6 +2052,8 @@ function DashboardSection() {
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [recipeCosts, setRecipeCosts] = useState<RecipeCostRow[]>([]);
   const [menuItems, setMenuItems] = useState<AdminMenuItem[] | null>(null);
+  const [employees, setEmployees] = useState<AdminEmployee[]>([]);
+  const [shifts, setShifts] = useState<EmployeeShiftRecord[]>([]);
   const [period, setPeriod] = useState<DashboardPeriod>('week');
 
   useEffect(() => {
@@ -1842,6 +2062,8 @@ function DashboardSection() {
     fetchInventoryMovements().then(setMovements);
     fetchAllRecipeCosts().then(setRecipeCosts);
     fetchAllMenuItemsAdmin().then(setMenuItems);
+    fetchEmployees().then(setEmployees);
+    fetchEmployeeShifts().then(setShifts);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1904,13 +2126,42 @@ function DashboardSection() {
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 6);
 
+  // Real labor cost from clocked shifts, when there's any — falls back to
+  // the manual weekly figure from Settings until staff actually start
+  // clocking in.
+  const employeesById = new Map(employees.map((e) => [e.id, e]));
+  const periodShifts = shifts.filter((s) => s.clockOut && inPeriod(s.clockOut));
+  const realLaborCost = periodShifts.reduce((sum, s) => {
+    const hours = (new Date(s.clockOut as string).getTime() - new Date(s.clockIn).getTime()) / 3600000;
+    return sum + hours * (employeesById.get(s.employeeId)?.hourlyRate ?? 0);
+  }, 0);
+  const hasRealLaborData = periodShifts.length > 0;
+
   const proration = PERIOD_DAYS[period] / 7;
-  const laborCost = appSettings.weeklyLaborCost * proration;
+  const laborCost = hasRealLaborData ? realLaborCost : appSettings.weeklyLaborCost * proration;
   const operatingCost = appSettings.weeklyOperatingCosts * proration;
   const netProfit = revenue - cogs - laborCost - operatingCost;
 
   const staffOrdersValue = staffOrders.reduce((sum, o) => sum + o.total, 0);
   const cancelledValue = cancelledOrders.reduce((sum, o) => sum + o.total, 0);
+
+  const deliveredOrders = periodOrders.filter((o) => o.riderId && o.pickedUpAt && o.deliveredAt);
+  const avgDeliveryMin =
+    deliveredOrders.length > 0
+      ? deliveredOrders.reduce(
+          (sum, o) =>
+            sum + (new Date(o.deliveredAt as string).getTime() - new Date(o.pickedUpAt as string).getTime()),
+          0
+        ) /
+        deliveredOrders.length /
+        60000
+      : null;
+  const unclaimedOrders = periodOrders.filter(
+    (o) =>
+      o.fulfillment.method === 'delivery' &&
+      !o.riderId &&
+      (o.status === 'placed' || o.status === 'preparing')
+  );
 
   const recipeCostsByItem = new Map<string, RecipeCostRow[]>();
   recipeCosts.forEach((r) => {
@@ -2021,8 +2272,9 @@ function DashboardSection() {
         PROFIT &amp; LOSS
       </Text>
       <Text style={[typography.bodyMuted, { fontSize: 11, marginBottom: spacing.sm }]}>
-        Cost of goods is what was actually logged as "used" in Inventory during this period; labor and other
-        operating costs are prorated from the weekly figures in Settings → Operations.
+        Cost of goods is what was actually logged as "used" in Inventory during this period. Labor is{' '}
+        {hasRealLaborData ? 'computed from actual clocked shifts in Team' : 'prorated from the weekly figure in Settings → Operations, since no shifts have been clocked yet'}
+        ; other operating costs are always prorated from that weekly figure.
       </Text>
       <View style={styles.statRow}>
         <Text style={typography.body}>Revenue</Text>
@@ -2033,7 +2285,7 @@ function DashboardSection() {
         <Text style={typography.bodyMuted}>{formatPrice(cogs)}</Text>
       </View>
       <View style={styles.statRow}>
-        <Text style={typography.body}>− Labor</Text>
+        <Text style={typography.body}>− Labor{hasRealLaborData ? ' (actual)' : ' (estimated)'}</Text>
         <Text style={typography.bodyMuted}>{formatPrice(laborCost)}</Text>
       </View>
       <View style={styles.statRow}>
@@ -2118,6 +2370,34 @@ function DashboardSection() {
       </View>
       <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
         Log one from Orders → "Log an order" with source "Staff" — excluded from revenue and shown here instead.
+      </Text>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        LABOR &amp; DELIVERY
+      </Text>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Hours clocked this period</Text>
+        <Text style={typography.bodyMuted}>
+          {(periodShifts.reduce((sum, s) => sum + (new Date(s.clockOut as string).getTime() - new Date(s.clockIn).getTime()), 0) / 3600000).toFixed(1)}h
+        </Text>
+      </View>
+      <View style={styles.statRow}>
+        <Text style={typography.body}>Average delivery time</Text>
+        <Text style={typography.bodyMuted}>
+          {avgDeliveryMin !== null ? `${avgDeliveryMin.toFixed(0)} min (pickup → delivered)` : 'No completed deliveries yet'}
+        </Text>
+      </View>
+      {unclaimedOrders.length > 0 && (
+        <View style={styles.statRow}>
+          <Text style={typography.body}>Unclaimed deliveries</Text>
+          <Text style={[typography.bodyMuted, { color: colors.danger, fontWeight: '700' }]}>
+            {unclaimedOrders.length}
+          </Text>
+        </View>
+      )}
+      <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
+        From the Team tab (clock in/out) and the rider dashboard (claim/pickup/deliver) — both are kiosk logins, not
+        part of this admin panel.
       </Text>
 
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>

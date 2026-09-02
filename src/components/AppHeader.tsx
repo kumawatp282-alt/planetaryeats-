@@ -33,6 +33,9 @@ export default function AppHeader() {
   const [navVisible, setNavVisible] = useState(false);
   const [langMenuVisible, setLangMenuVisible] = useState(false);
 
+  // Standalone kiosk screens, not part of the customer-facing site chrome.
+  if (pathname === '/staff' || pathname === '/rider') return null;
+
   const isHome = pathname === '/';
   const hideBack = isHome || pathname === '/order-confirmation';
   const pageTitle = PAGE_TITLES[pathname];
