@@ -2423,17 +2423,19 @@ function DashboardSection() {
       </View>
 
       <Text style={typography.label}>SALES & EXECUTIVE SUMMARY</Text>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Revenue</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(revenue)}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Orders</Text>
-        <Text style={typography.bodyMuted}>{orderCount}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Average order value</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(aov)}</Text>
+      <View style={styles.statTileRow}>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(revenue)}</Text>
+          <Text style={styles.statTileLabel}>Revenue</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{orderCount}</Text>
+          <Text style={styles.statTileLabel}>Orders</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(aov)}</Text>
+          <Text style={styles.statTileLabel}>Average order value</Text>
+        </View>
       </View>
 
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>TOP DISHES</Text>
@@ -2455,27 +2457,29 @@ function DashboardSection() {
         {hasRealLaborData ? 'computed from actual clocked shifts in Team' : 'prorated from the weekly figure in Settings → Operations, since no shifts have been clocked yet'}
         ; other operating costs are always prorated from that weekly figure.
       </Text>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Revenue</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(revenue)}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>− Cost of goods (ingredients used)</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(cogs)}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>− Labor{hasRealLaborData ? ' (actual)' : ' (estimated)'}</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(laborCost)}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>− Other operating costs</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(operatingCost)}</Text>
-      </View>
-      <View style={[styles.statRow, { marginTop: spacing.xs }]}>
-        <Text style={[typography.body, { fontWeight: '700' }]}>Net profit</Text>
-        <Text style={{ fontWeight: '700', color: netProfit < 0 ? colors.danger : colors.forest }}>
-          {formatPrice(netProfit)}
-        </Text>
+      <View style={styles.statTileRow}>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(revenue)}</Text>
+          <Text style={styles.statTileLabel}>Revenue</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(cogs)}</Text>
+          <Text style={styles.statTileLabel}>− Cost of goods</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(laborCost)}</Text>
+          <Text style={styles.statTileLabel}>− Labor{hasRealLaborData ? ' (actual)' : ' (estimated)'}</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(operatingCost)}</Text>
+          <Text style={styles.statTileLabel}>− Other operating costs</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={[styles.statTileValue, { color: netProfit < 0 ? colors.danger : colors.forest }]}>
+            {formatPrice(netProfit)}
+          </Text>
+          <Text style={styles.statTileLabel}>Net profit</Text>
+        </View>
       </View>
 
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>MENU ENGINEERING</Text>
@@ -2524,13 +2528,15 @@ function DashboardSection() {
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
         CANCELLED / RETURNED ORDERS
       </Text>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Count</Text>
-        <Text style={typography.bodyMuted}>{cancelledOrders.length}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Value</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(cancelledValue)}</Text>
+      <View style={styles.statTileRow}>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{cancelledOrders.length}</Text>
+          <Text style={styles.statTileLabel}>Count</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(cancelledValue)}</Text>
+          <Text style={styles.statTileLabel}>Value</Text>
+        </View>
       </View>
       <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
         Cancel or mark an order returned from the Orders tab — it shows up here automatically.
@@ -2539,13 +2545,15 @@ function DashboardSection() {
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
         EMPLOYEE / PERSONAL ORDERS
       </Text>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Count</Text>
-        <Text style={typography.bodyMuted}>{staffOrders.length}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Value given</Text>
-        <Text style={typography.bodyMuted}>{formatPrice(staffOrdersValue)}</Text>
+      <View style={styles.statTileRow}>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{staffOrders.length}</Text>
+          <Text style={styles.statTileLabel}>Count</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(staffOrdersValue)}</Text>
+          <Text style={styles.statTileLabel}>Value given</Text>
+        </View>
       </View>
       <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
         Log one from Orders → "Log an order" with source "Staff" — excluded from revenue and shown here instead.
@@ -2554,26 +2562,26 @@ function DashboardSection() {
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
         LABOR &amp; DELIVERY
       </Text>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Hours clocked this period</Text>
-        <Text style={typography.bodyMuted}>
-          {(periodShifts.reduce((sum, s) => sum + (new Date(s.clockOut as string).getTime() - new Date(s.clockIn).getTime()), 0) / 3600000).toFixed(1)}h
-        </Text>
-      </View>
-      <View style={styles.statRow}>
-        <Text style={typography.body}>Average delivery time</Text>
-        <Text style={typography.bodyMuted}>
-          {avgDeliveryMin !== null ? `${avgDeliveryMin.toFixed(0)} min (pickup → delivered)` : 'No completed deliveries yet'}
-        </Text>
-      </View>
-      {unclaimedOrders.length > 0 && (
-        <View style={styles.statRow}>
-          <Text style={typography.body}>Unclaimed deliveries</Text>
-          <Text style={[typography.bodyMuted, { color: colors.danger, fontWeight: '700' }]}>
-            {unclaimedOrders.length}
+      <View style={styles.statTileRow}>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>
+            {(periodShifts.reduce((sum, s) => sum + (new Date(s.clockOut as string).getTime() - new Date(s.clockIn).getTime()), 0) / 3600000).toFixed(1)}h
           </Text>
+          <Text style={styles.statTileLabel}>Hours clocked this period</Text>
         </View>
-      )}
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>
+            {avgDeliveryMin !== null ? `${avgDeliveryMin.toFixed(0)} min` : '—'}
+          </Text>
+          <Text style={styles.statTileLabel}>Average delivery time</Text>
+        </View>
+        {unclaimedOrders.length > 0 && (
+          <View style={styles.statTile}>
+            <Text style={[styles.statTileValue, { color: colors.danger }]}>{unclaimedOrders.length}</Text>
+            <Text style={styles.statTileLabel}>Unclaimed deliveries</Text>
+          </View>
+        )}
+      </View>
       <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
         From the Team tab (clock in/out) and the rider dashboard (claim/pickup/deliver) — both are kiosk logins, not
         part of this admin panel.
