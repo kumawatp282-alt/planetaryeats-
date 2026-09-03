@@ -24,6 +24,7 @@ import { Nutrition } from '../data/menu';
 import AuthForm from '../components/AuthForm';
 import ReceiptView from '../components/ReceiptView';
 import MenuItemEditorModal from '../components/MenuItemEditorModal';
+import DonutChart from '../components/DonutChart';
 import RadiusMapEditor from '../components/RadiusMapEditor';
 import OrderHeatmap from '../components/OrderHeatmap';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
@@ -521,6 +522,7 @@ function InventoryRow({
   const [carbsPerUnit, setCarbsPerUnit] = useState(item.carbsPerUnit !== null ? String(item.carbsPerUnit) : '');
   const [fatPerUnit, setFatPerUnit] = useState(item.fatPerUnit !== null ? String(item.fatPerUnit) : '');
   const [costPerUnit, setCostPerUnit] = useState(item.costPerUnit !== null ? String(item.costPerUnit) : '');
+  const [supplier, setSupplier] = useState(item.supplier ?? '');
   const [message, setMessage] = useState<string | null>(null);
   const [logging, setLogging] = useState(false);
   const [moveType, setMoveType] = useState<InventoryMovement['type']>('used');
@@ -577,6 +579,7 @@ function InventoryRow({
       carbsPerUnit: carbsPerUnit.trim() ? Number(carbsPerUnit) : null,
       fatPerUnit: fatPerUnit.trim() ? Number(fatPerUnit) : null,
       costPerUnit: costPerUnit.trim() ? Number(costPerUnit) : null,
+      supplier: supplier.trim() || null,
     });
     setSaving(false);
     if (error) {
@@ -828,6 +831,15 @@ function InventoryRow({
               placeholderTextColor={colors.inkMuted}
             />
 
+            <Text style={[typography.label, { marginTop: spacing.md }]}>SUPPLIER</Text>
+            <TextInput
+              value={supplier}
+              onChangeText={setSupplier}
+              style={styles.input}
+              placeholder="e.g. Metro, Selgros, Asian Store"
+              placeholderTextColor={colors.inkMuted}
+            />
+
             <Pressable style={styles.saveButton} onPress={saveDetails} disabled={saving}>
               <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save details'}</Text>
             </Pressable>
@@ -903,6 +915,7 @@ function InventorySection() {
       carbsPerUnit: null,
       fatPerUnit: null,
       costPerUnit: null,
+      supplier: null,
     });
     setSaving(false);
     if (error) {
@@ -949,6 +962,50 @@ function InventorySection() {
     .filter((r) => r.avgWeekly > 0 && r.shortfall > 0)
     .sort((a, b) => b.shortfall - a.shortfall);
 
+  // Days left at the current usage rate, and when each ingredient was last
+  // restocked — both derived from the same movement log, no new data needed.
+  const daysLeftByItem = new Map<string, number | null>();
+  const lastRestockedByItem = new Map<string, string | null>();
+  items.forEach((item) => {
+    const itemMovements = movementsByItem.get(item.id) ?? [];
+    const last28Days = itemMovements.filter(
+      (m) => (m.type === 'used' || m.type === 'waste') && now - new Date(m.createdAt).getTime() <= 28 * DAY_MS
+    );
+    const avgDaily = last28Days.reduce((sum, m) => sum + m.quantity, 0) / 28;
+    daysLeftByItem.set(item.id, avgDaily > 0 ? item.currentStock / avgDaily : null);
+
+    const restocks = itemMovements
+      .filter((m) => m.type === 'restock')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    lastRestockedByItem.set(item.id, restocks[0]?.createdAt ?? null);
+  });
+
+  const outOfStockCount = items.filter((i) => i.currentStock <= 0).length;
+
+  const CATEGORY_COLORS = ['#1A1A1A', '#404040', '#595959', '#6B6B6B', '#8A8A8A', '#A6A6A6', '#C2C2C2'];
+  const categoryCounts = new Map<string, number>();
+  items.forEach((i) => categoryCounts.set(i.category, (categoryCounts.get(i.category) ?? 0) + 1));
+  const categorySegments = Array.from(categoryCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, value], i) => ({ label, value, color: CATEGORY_COLORS[i % CATEGORY_COLORS.length] }));
+
+  const supplierGroups = new Map<string, InventoryItem[]>();
+  items.forEach((i) => {
+    if (!i.supplier) return;
+    const list = supplierGroups.get(i.supplier) ?? [];
+    list.push(i);
+    supplierGroups.set(i.supplier, list);
+  });
+  const supplierRows = Array.from(supplierGroups.entries())
+    .map(([supplier, supplierItems]) => {
+      const lastRestocks = supplierItems
+        .map((i) => lastRestockedByItem.get(i.id))
+        .filter((d): d is string => Boolean(d))
+        .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+      return { supplier, count: supplierItems.length, lastRestock: lastRestocks[0] ?? null };
+    })
+    .sort((a, b) => b.count - a.count);
+
   const existingCategories = Array.from(new Set(items.map((i) => i.category))).sort();
   const grouped = new Map<string, InventoryItem[]>();
   items.forEach((i) => {
@@ -966,7 +1023,101 @@ function InventorySection() {
         </Text>
       </View>
 
-      <Text style={typography.label}>NEEDS RESTOCK</Text>
+      <View style={styles.statTileRow}>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{items.length}</Text>
+          <Text style={styles.statTileLabel}>Ingredients</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={[styles.statTileValue, needsRestock.length > 0 && { color: colors.danger }]}>
+            {needsRestock.length}
+          </Text>
+          <Text style={styles.statTileLabel}>Below threshold</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={[styles.statTileValue, outOfStockCount > 0 && { color: colors.danger }]}>
+            {outOfStockCount}
+          </Text>
+          <Text style={styles.statTileLabel}>Out of stock</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{nextWeekEstimate.length}</Text>
+          <Text style={styles.statTileLabel}>Reorder this week</Text>
+        </View>
+      </View>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        INVENTORY STATUS OVERVIEW
+      </Text>
+      {(() => {
+        const overviewRows = items
+          .map((item) => ({ item, daysLeft: daysLeftByItem.get(item.id) ?? null }))
+          .sort((a, b) => {
+            if (a.daysLeft === null && b.daysLeft === null) return 0;
+            if (a.daysLeft === null) return 1;
+            if (b.daysLeft === null) return -1;
+            return a.daysLeft - b.daysLeft;
+          })
+          .slice(0, 10);
+        return (
+          <>
+            <View style={styles.tableHeader}>
+              <Text style={[styles.tableCell, styles.tableHeaderText]}>Ingredient</Text>
+              <Text style={[styles.tableCell, styles.tableHeaderText]}>Stock</Text>
+              <Text style={[styles.tableCell, styles.tableHeaderText]}>Status</Text>
+              <Text style={[styles.tableCell, styles.tableHeaderText]}>Restocked</Text>
+              <Text style={[styles.tableCell, styles.tableHeaderText]}>Days left</Text>
+            </View>
+            {overviewRows.map(({ item, daysLeft }) => {
+              const status: 'out' | 'low' | 'ok' =
+                item.currentStock <= 0 ? 'out' : item.currentStock <= item.reorderThreshold ? 'low' : 'ok';
+              const lastRestocked = lastRestockedByItem.get(item.id);
+              return (
+                <View key={item.id} style={styles.tableRow}>
+                  <Text style={styles.tableCell}>{item.name}</Text>
+                  <Text style={styles.tableCell}>
+                    {formatQty(item.currentStock)} {item.unit}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.tableCell,
+                      { color: status === 'ok' ? colors.forest : colors.danger, fontWeight: '700' },
+                    ]}
+                  >
+                    {status === 'ok' ? 'OK' : status === 'low' ? 'Low' : 'Out'}
+                  </Text>
+                  <Text style={styles.tableCell}>
+                    {lastRestocked ? new Date(lastRestocked).toLocaleDateString() : '—'}
+                  </Text>
+                  <Text style={styles.tableCell}>{daysLeft !== null ? `${Math.round(daysLeft)}d` : '—'}</Text>
+                </View>
+              );
+            })}
+            <Text style={[typography.bodyMuted, { fontSize: 11, marginTop: spacing.xs }]}>
+              The 10 ingredients running out soonest — full list further down.
+            </Text>
+          </>
+        );
+      })()}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        INVENTORY DISTRIBUTION
+      </Text>
+      <View style={styles.donutRow}>
+        <DonutChart segments={categorySegments} />
+        <View style={{ flex: 1, marginLeft: spacing.lg }}>
+          {categorySegments.map((seg) => (
+            <View key={seg.label} style={styles.legendRow}>
+              <View style={[styles.legendSwatch, { backgroundColor: seg.color }]} />
+              <Text style={[typography.bodyMuted, { flex: 1 }]}>{seg.label}</Text>
+              <Text style={typography.body}>{Math.round((seg.value / items.length) * 100)}%</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      <Text style={[typography.bodyMuted, { fontSize: 11 }]}>By number of ingredients per category.</Text>
+
+      <Text style={[typography.label, { marginTop: spacing.lg }]}>NEEDS RESTOCK</Text>
       {needsRestock.length === 0 ? (
         <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>Everything's stocked. ✓</Text>
       ) : (
@@ -1003,6 +1154,29 @@ function InventorySection() {
             </View>
             <Text style={styles.restockAmount}>
               +{formatQty(shortfall)} {item.unit}
+            </Text>
+          </View>
+        ))
+      )}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        SUPPLIER INFORMATION
+      </Text>
+      {supplierRows.length === 0 ? (
+        <Text style={typography.bodyMuted}>
+          No suppliers set yet — add one to an ingredient's details below (Edit → Supplier).
+        </Text>
+      ) : (
+        supplierRows.map((s) => (
+          <View key={s.supplier} style={styles.statRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={typography.body}>{s.supplier}</Text>
+              <Text style={typography.bodyMuted}>
+                {s.count} ingredient{s.count === 1 ? '' : 's'}
+              </Text>
+            </View>
+            <Text style={typography.bodyMuted}>
+              {s.lastRestock ? `Last restock ${new Date(s.lastRestock).toLocaleDateString()}` : 'No restocks logged'}
             </Text>
           </View>
         ))
@@ -2903,6 +3077,47 @@ const styles = StyleSheet.create({
   },
   adminToggleButton: {
     backgroundColor: colors.clay,
+  },
+  statTileRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  statTile: {
+    flex: 1,
+    minWidth: 120,
+    backgroundColor: colors.card,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    alignItems: 'center',
+  },
+  statTileValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  statTileLabel: {
+    fontSize: 11,
+    color: colors.inkMuted,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  donutRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: 6,
+  },
+  legendSwatch: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
   },
   restockAmount: {
     fontWeight: '700',

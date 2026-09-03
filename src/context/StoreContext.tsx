@@ -169,6 +169,7 @@ export interface InventoryItem {
   // What one unit actually costs to buy — powers per-dish margin (menu
   // engineering) and turns a logged waste quantity into a waste cost.
   costPerUnit: number | null;
+  supplier: string | null;
 }
 
 export interface InventoryItemInput {
@@ -186,6 +187,7 @@ export interface InventoryItemInput {
   carbsPerUnit: number | null;
   fatPerUnit: number | null;
   costPerUnit: number | null;
+  supplier: string | null;
 }
 
 // A logged stock change — what actually moved, not just the running total.
@@ -601,6 +603,7 @@ function rowToInventoryItem(row: any): InventoryItem {
     carbsPerUnit: nullableNum(row.carbs_per_unit),
     fatPerUnit: nullableNum(row.fat_per_unit),
     costPerUnit: nullableNum(row.cost_per_unit),
+    supplier: row.supplier ?? null,
   };
 }
 
@@ -1015,6 +1018,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           carbs_per_unit: input.carbsPerUnit,
           fat_per_unit: input.fatPerUnit,
           cost_per_unit: input.costPerUnit,
+          supplier: input.supplier,
           updated_at: new Date().toISOString(),
         };
         const { error } = input.id
