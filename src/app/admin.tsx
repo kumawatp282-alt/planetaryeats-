@@ -100,12 +100,7 @@ export default function AdminScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabRowScroll}
-        contentContainerStyle={styles.tabRow}
-      >
+      <View style={styles.tabRow}>
         {(Object.keys(SECTION_LABELS) as Section[]).map((s) => (
           <Pressable
             key={s}
@@ -115,7 +110,7 @@ export default function AdminScreen() {
             <Text style={[styles.tabText, section === s && styles.tabTextActive]}>{SECTION_LABELS[s]}</Text>
           </Pressable>
         ))}
-      </ScrollView>
+      </View>
       {section === 'dashboard' && <DashboardSection />}
       {section === 'settings' && <SettingsSection />}
       {section === 'menu' && <MenuSection />}
@@ -2908,14 +2903,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
     padding: spacing.lg,
   },
-  tabRowScroll: {
-    flexGrow: 0,
-  },
   tabRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.xs,
     backgroundColor: colors.card,
-    borderRadius: radii.pill,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 3,
