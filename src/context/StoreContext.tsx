@@ -477,6 +477,16 @@ interface StoreContextValue extends StoreState {
   regenerateEmployeeCode: (id: string, codeHash: string) => Promise<{ error: string | null }>;
   setEmployeeActive: (id: string, active: boolean) => Promise<{ error: string | null }>;
   fetchEmployeeShifts: () => Promise<EmployeeShiftRecord[]>;
+  // Admin-side shift entry — unlike employee_clock_in/out (kiosk-only,
+  // always "now"), these let the admin set explicit times, for a shift
+  // someone forgot to log at all or forgot to clock out of.
+  createManualShift: (
+    employeeId: string,
+    clockIn: string,
+    clockOut: string | null
+  ) => Promise<{ error: string | null }>;
+  updateShift: (id: string, clockIn: string, clockOut: string | null) => Promise<{ error: string | null }>;
+  deleteShift: (id: string) => Promise<{ error: string | null }>;
   fetchAllMenuItemsAdmin: () => Promise<AdminMenuItem[]>;
   upsertMenuItem: (input: MenuItemInput) => Promise<{ error: string | null }>;
   setMenuItemActive: (id: string, active: boolean) => Promise<{ error: string | null }>;
@@ -950,6 +960,25 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .order('clock_in', { ascending: false });
         if (error || !data) return [];
         return data.map(rowToEmployeeShiftRecord);
+      },
+      createManualShift: async (employeeId, clockIn, clockOut) => {
+        const { error } = await supabase.from('employee_shifts').insert({
+          employee_id: employeeId,
+          clock_in: clockIn,
+          clock_out: clockOut,
+        });
+        return { error: error?.message ?? null };
+      },
+      updateShift: async (id, clockIn, clockOut) => {
+        const { error } = await supabase
+          .from('employee_shifts')
+          .update({ clock_in: clockIn, clock_out: clockOut })
+          .eq('id', id);
+        return { error: error?.message ?? null };
+      },
+      deleteShift: async (id) => {
+        const { error } = await supabase.from('employee_shifts').delete().eq('id', id);
+        return { error: error?.message ?? null };
       },
       fetchAllMenuItemsAdmin: async () => {
         const { data, error } = await supabase

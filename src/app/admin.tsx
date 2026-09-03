@@ -1688,9 +1688,294 @@ function generateEmployeeCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+// Shifts are entered/edited as separate local date + time fields (same
+// convention as opening hours elsewhere in this file) and combined into a
+// real timestamp only at save time.
+function combineDateTime(date: string, time: string): string {
+  return new Date(`${date}T${time}:00`).toISOString();
+}
+
+function splitDateTime(iso: string): { date: string; time: string } {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
+}
+
+function shiftHours(s: EmployeeShiftRecord): number {
+  return s.clockOut ? (new Date(s.clockOut).getTime() - new Date(s.clockIn).getTime()) / 3600000 : 0;
+}
+
+function isSameMonth(iso: string, ref: Date): boolean {
+  const d = new Date(iso);
+  return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
+}
+
+function EmployeeRow({
+  employee,
+  shifts,
+  deliveries,
+  onChanged,
+}: {
+  employee: AdminEmployee;
+  shifts: EmployeeShiftRecord[];
+  deliveries: Order[];
+  onChanged: () => void;
+}) {
+  const { regenerateEmployeeCode, setEmployeeActive, createManualShift, updateShift, deleteShift } = useStore();
+  const [saving, setSaving] = useState(false);
+  const [showTimesheet, setShowTimesheet] = useState(false);
+  const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
+  const [shiftDate, setShiftDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [shiftIn, setShiftIn] = useState('09:00');
+  const [shiftOut, setShiftOut] = useState('');
+  const [shiftMessage, setShiftMessage] = useState<string | null>(null);
+
+  const regenerate = async () => {
+    setSaving(true);
+    const code = generateEmployeeCode();
+    const codeHash = await hashEmployeeCode(code);
+    const { error } = await regenerateEmployeeCode(employee.id, codeHash);
+    setSaving(false);
+    if (error) {
+      setShiftMessage(error);
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.alert(`${employee.name}'s new login code is ${code} — write it down now, it won't be shown again.`);
+    }
+  };
+
+  const toggleActive = async () => {
+    setSaving(true);
+    await setEmployeeActive(employee.id, !employee.active);
+    setSaving(false);
+    onChanged();
+  };
+
+  const resetShiftForm = () => {
+    setShiftDate(new Date().toISOString().slice(0, 10));
+    setShiftIn('09:00');
+    setShiftOut('');
+    setEditingShiftId(null);
+    setShiftMessage(null);
+  };
+
+  const startEditShift = (s: EmployeeShiftRecord) => {
+    const inParts = splitDateTime(s.clockIn);
+    setShiftDate(inParts.date);
+    setShiftIn(inParts.time);
+    setShiftOut(s.clockOut ? splitDateTime(s.clockOut).time : '');
+    setEditingShiftId(s.id);
+    setShiftMessage(null);
+  };
+
+  const saveShift = async () => {
+    if (!shiftDate.trim() || !shiftIn.trim()) {
+      setShiftMessage('Enter a date and clock-in time.');
+      return;
+    }
+    let clockInIso: string;
+    let clockOutIso: string | null;
+    try {
+      clockInIso = combineDateTime(shiftDate, shiftIn);
+      clockOutIso = shiftOut.trim() ? combineDateTime(shiftDate, shiftOut) : null;
+    } catch {
+      setShiftMessage('Enter a valid date (YYYY-MM-DD) and times (HH:MM).');
+      return;
+    }
+    if (clockOutIso && new Date(clockOutIso) <= new Date(clockInIso)) {
+      setShiftMessage('Clock-out must be after clock-in.');
+      return;
+    }
+    setSaving(true);
+    setShiftMessage(null);
+    const { error } = editingShiftId
+      ? await updateShift(editingShiftId, clockInIso, clockOutIso)
+      : await createManualShift(employee.id, clockInIso, clockOutIso);
+    setSaving(false);
+    if (error) {
+      setShiftMessage(error);
+      return;
+    }
+    resetShiftForm();
+    onChanged();
+  };
+
+  const removeShift = async (id: string) => {
+    if (typeof window !== 'undefined' && !window.confirm('Delete this shift entry?')) return;
+    setSaving(true);
+    await deleteShift(id);
+    setSaving(false);
+    onChanged();
+  };
+
+  const totalHours = shifts.reduce((sum, s) => sum + shiftHours(s), 0);
+  const now = new Date();
+  const monthShifts = shifts.filter((s) => isSameMonth(s.clockIn, now));
+  const monthHours = monthShifts.reduce((sum, s) => sum + shiftHours(s), 0);
+  const monthPay = monthHours * employee.hourlyRate;
+
+  const avgDeliveryMin =
+    deliveries.length > 0
+      ? deliveries.reduce(
+          (sum, o) =>
+            sum + (new Date(o.deliveredAt as string).getTime() - new Date(o.pickedUpAt ?? o.placedAt).getTime()),
+          0
+        ) /
+        deliveries.length /
+        60000
+      : null;
+
+  const sortedShifts = [...shifts].sort((a, b) => new Date(b.clockIn).getTime() - new Date(a.clockIn).getTime());
+
+  return (
+    <View style={[styles.rowCard, !employee.active && styles.rowCardHidden]}>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flex: 1 }}>
+            <Text style={typography.body}>
+              {employee.name}
+              {!employee.active ? ' · Inactive' : ''}
+            </Text>
+            <Text style={typography.bodyMuted}>
+              {employee.role === 'kitchen' ? 'Kitchen staff' : 'Rider'} · {formatPrice(employee.hourlyRate)}/hr
+            </Text>
+            <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
+              {employee.role === 'kitchen'
+                ? `${totalHours.toFixed(1)}h all-time · ${monthHours.toFixed(1)}h this month`
+                : `${deliveries.length} deliveries${
+                    avgDeliveryMin !== null ? ` · avg ${avgDeliveryMin.toFixed(0)} min` : ''
+                  }`}
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm }}>
+          <Pressable style={styles.smallButton} onPress={() => setShowTimesheet(!showTimesheet)}>
+            <Text style={styles.smallButtonText}>{showTimesheet ? 'Close' : 'Timesheet'}</Text>
+          </Pressable>
+          <Pressable style={styles.smallButton} onPress={regenerate} disabled={saving}>
+            <Text style={styles.smallButtonText}>New code</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.smallButton, employee.active ? styles.banButton : styles.unbanButton]}
+            onPress={toggleActive}
+            disabled={saving}
+          >
+            <Text style={styles.smallButtonText}>{employee.active ? 'Deactivate' : 'Reactivate'}</Text>
+          </Pressable>
+        </View>
+
+        {showTimesheet && (
+          <View style={{ marginTop: spacing.md }}>
+            <Text style={[typography.label, { fontSize: 11 }]}>THIS MONTH</Text>
+            <View style={styles.statRow}>
+              <Text style={typography.body}>Hours worked</Text>
+              <Text style={typography.bodyMuted}>{monthHours.toFixed(1)}h</Text>
+            </View>
+            <View style={styles.statRow}>
+              <Text style={typography.body}>Pay owed (at {formatPrice(employee.hourlyRate)}/hr)</Text>
+              <Text style={typography.bodyMuted}>{formatPrice(monthPay)}</Text>
+            </View>
+
+            <Text style={[typography.label, { marginTop: spacing.md, fontSize: 11 }]}>
+              {editingShiftId ? 'EDIT SHIFT' : 'ADD A SHIFT'}
+            </Text>
+            <Text style={typography.bodyMuted}>
+              For a day they forgot to clock in or out — enter it manually.
+            </Text>
+            <View style={styles.inputRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { fontSize: 10, marginTop: spacing.sm }]}>DATE</Text>
+                <TextInput
+                  value={shiftDate}
+                  onChangeText={setShiftDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.inkMuted}
+                  style={styles.input}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { fontSize: 10, marginTop: spacing.sm }]}>CLOCK IN</Text>
+                <TextInput
+                  value={shiftIn}
+                  onChangeText={setShiftIn}
+                  placeholder="09:00"
+                  placeholderTextColor={colors.inkMuted}
+                  style={styles.input}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.label, { fontSize: 10, marginTop: spacing.sm }]}>CLOCK OUT</Text>
+                <TextInput
+                  value={shiftOut}
+                  onChangeText={setShiftOut}
+                  placeholder="Blank = ongoing"
+                  placeholderTextColor={colors.inkMuted}
+                  style={styles.input}
+                />
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm }}>
+              <Pressable style={styles.smallButton} onPress={saveShift} disabled={saving}>
+                <Text style={styles.smallButtonText}>
+                  {saving ? 'Saving…' : editingShiftId ? 'Save changes' : '+ Add shift'}
+                </Text>
+              </Pressable>
+              {editingShiftId && (
+                <Pressable style={[styles.smallButton, styles.adminToggleButton]} onPress={resetShiftForm}>
+                  <Text style={styles.smallButtonText}>Cancel edit</Text>
+                </Pressable>
+              )}
+            </View>
+            {shiftMessage && <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>{shiftMessage}</Text>}
+
+            <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.xs, fontSize: 11 }]}>
+              ALL SHIFTS
+            </Text>
+            {sortedShifts.length === 0 && <Text style={typography.bodyMuted}>No shifts logged yet.</Text>}
+            {sortedShifts.map((s) => {
+              const hours = shiftHours(s);
+              return (
+                <View key={s.id} style={styles.statRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={typography.body}>{new Date(s.clockIn).toLocaleDateString()}</Text>
+                    <Text style={typography.bodyMuted}>
+                      {new Date(s.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {' – '}
+                      {s.clockOut
+                        ? new Date(s.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : 'still clocked in'}
+                      {s.clockOut ? ` · ${hours.toFixed(1)}h` : ''}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+                    <Pressable style={styles.smallButton} onPress={() => startEditShift(s)}>
+                      <Text style={styles.smallButtonText}>Edit</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.smallButton, styles.banButton]}
+                      onPress={() => removeShift(s.id)}
+                      disabled={saving}
+                    >
+                      <Text style={styles.smallButtonText}>✕</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
 function TeamSection() {
-  const { fetchEmployees, createEmployee, regenerateEmployeeCode, setEmployeeActive, fetchEmployeeShifts, fetchAllOrders } =
-    useStore();
+  const { fetchEmployees, createEmployee, fetchEmployeeShifts, fetchAllOrders } = useStore();
   const [employees, setEmployees] = useState<AdminEmployee[] | null>(null);
   const [shifts, setShifts] = useState<EmployeeShiftRecord[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -1741,28 +2026,6 @@ function TeamSection() {
     load();
   };
 
-  const regenerate = async (employee: AdminEmployee) => {
-    setSaving(true);
-    setMessage(null);
-    const code = generateEmployeeCode();
-    const codeHash = await hashEmployeeCode(code);
-    const { error } = await regenerateEmployeeCode(employee.id, codeHash);
-    setSaving(false);
-    if (error) {
-      setMessage(error);
-      return;
-    }
-    if (typeof window !== 'undefined') {
-      window.alert(`${employee.name}'s new login code is ${code} — write it down now, it won't be shown again.`);
-    }
-  };
-
-  const toggleActive = async (employee: AdminEmployee) => {
-    setSaving(true);
-    await setEmployeeActive(employee.id, !employee.active);
-    setSaving(false);
-    load();
-  };
 
   if (!employees) {
     return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
@@ -1832,59 +2095,15 @@ function TeamSection() {
 
       <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>ROSTER</Text>
       {employees.length === 0 && <Text style={typography.bodyMuted}>No employees yet.</Text>}
-      {employees.map((e) => {
-        const empShifts = shiftsByEmployee.get(e.id) ?? [];
-        const totalHours =
-          empShifts.reduce(
-            (sum, s) => sum + (s.clockOut ? new Date(s.clockOut).getTime() - new Date(s.clockIn).getTime() : 0),
-            0
-          ) / 3600000;
-        const deliveries = deliveriesByRider.get(e.id) ?? [];
-        const avgDeliveryMin =
-          deliveries.length > 0
-            ? deliveries.reduce(
-                (sum, o) =>
-                  sum +
-                  (new Date(o.deliveredAt as string).getTime() -
-                    new Date(o.pickedUpAt ?? o.placedAt).getTime()),
-                0
-              ) /
-              deliveries.length /
-              60000
-            : null;
-        return (
-          <View key={e.id} style={[styles.rowCard, !e.active && styles.rowCardHidden]}>
-            <View style={{ flex: 1 }}>
-              <Text style={typography.body}>
-                {e.name}
-                {!e.active ? ' · Inactive' : ''}
-              </Text>
-              <Text style={typography.bodyMuted}>
-                {e.role === 'kitchen' ? 'Kitchen staff' : 'Rider'} · {formatPrice(e.hourlyRate)}/hr
-              </Text>
-              <Text style={[typography.bodyMuted, { fontSize: 11 }]}>
-                {e.role === 'kitchen'
-                  ? `${totalHours.toFixed(1)}h logged all-time`
-                  : `${deliveries.length} deliveries${
-                      avgDeliveryMin !== null ? ` · avg ${avgDeliveryMin.toFixed(0)} min` : ''
-                    }`}
-              </Text>
-            </View>
-            <View style={{ flexDirection: 'row', gap: spacing.xs }}>
-              <Pressable style={styles.smallButton} onPress={() => regenerate(e)} disabled={saving}>
-                <Text style={styles.smallButtonText}>New code</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.smallButton, e.active ? styles.banButton : styles.unbanButton]}
-                onPress={() => toggleActive(e)}
-                disabled={saving}
-              >
-                <Text style={styles.smallButtonText}>{e.active ? 'Deactivate' : 'Reactivate'}</Text>
-              </Pressable>
-            </View>
-          </View>
-        );
-      })}
+      {employees.map((e) => (
+        <EmployeeRow
+          key={e.id}
+          employee={e}
+          shifts={shiftsByEmployee.get(e.id) ?? []}
+          deliveries={deliveriesByRider.get(e.id) ?? []}
+          onChanged={load}
+        />
+      ))}
 
       <Text style={[typography.bodyMuted, { fontSize: 11, marginTop: spacing.md }]}>
         Staff sign in at planetaryeats.com/staff (kitchen) or /rider (riders) with the code you give them — those
