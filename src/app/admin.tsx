@@ -2922,6 +2922,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   tab: {
+    flexShrink: 0,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radii.pill,
