@@ -90,6 +90,26 @@ export default function ProfileScreen() {
           <Ionicons name="receipt-outline" size={20} color={colors.forest} />
           <Text style={[typography.body, { marginLeft: spacing.md }]}>Your orders</Text>
         </Pressable>
+        <Pressable style={[styles.row, styles.rowDivider]} onPress={() => router.push('/rewards')}>
+          <Ionicons name="star-outline" size={20} color={colors.forest} />
+          <Text style={[typography.body, { marginLeft: spacing.md }]}>Rewards</Text>
+        </Pressable>
+        <Pressable style={[styles.row, styles.rowDivider]} onPress={() => router.push('/help')}>
+          <Ionicons name="help-circle-outline" size={20} color={colors.forest} />
+          <Text style={[typography.body, { marginLeft: spacing.md }]}>Need help?</Text>
+        </Pressable>
+        <Pressable style={[styles.row, styles.rowDivider]} onPress={() => router.push('/courier')}>
+          <Ionicons name="bicycle-outline" size={20} color={colors.forest} />
+          <Text style={[typography.body, { marginLeft: spacing.md }]}>Become a courier</Text>
+        </Pressable>
+        <Pressable style={[styles.row, styles.rowDivider]} onPress={() => router.push('/business')}>
+          <Ionicons name="briefcase-outline" size={20} color={colors.forest} />
+          <Text style={[typography.body, { marginLeft: spacing.md }]}>Planetary Eats for Business</Text>
+        </Pressable>
+        <Pressable style={[styles.row, styles.rowDivider]} onPress={() => router.push('/partner')}>
+          <Ionicons name="people-outline" size={20} color={colors.forest} />
+          <Text style={[typography.body, { marginLeft: spacing.md }]}>Partner with us</Text>
+        </Pressable>
         {isAdmin && (
           <Pressable style={[styles.row, styles.rowDivider]} onPress={() => router.push('/admin')}>
             <Ionicons name="shield-checkmark-outline" size={20} color={colors.forest} />
@@ -103,8 +123,8 @@ export default function ProfileScreen() {
       </Pressable>
 
       <Text style={styles.footnote}>
-        Payments aren't wired up to a real processor yet — checkout collects your preferred method but doesn't
-        charge anything.
+        Card payments are processed securely via Stripe. PayPal, bank transfer, and cash are recorded as your
+        stated preference — not yet charged automatically.
       </Text>
     </View>
   );

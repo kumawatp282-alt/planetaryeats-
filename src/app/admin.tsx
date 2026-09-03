@@ -10,6 +10,7 @@ import {
   AdminMenuItem,
   AdminProfile,
   EmployeeShiftRecord,
+  Inquiry,
   InventoryItem,
   InventoryMovement,
   lineUnitPrice,
@@ -18,6 +19,7 @@ import {
   RecipeIngredient,
   RecipeTriggerType,
   useStore,
+  Voucher,
 } from '../context/StoreContext';
 import { hashEmployeeCode } from '../context/EmployeeAuthContext';
 import { Nutrition } from '../data/menu';
@@ -51,6 +53,8 @@ type Section =
   | 'team'
   | 'customers'
   | 'orders'
+  | 'vouchers'
+  | 'inquiries'
   | 'analytics'
   | 'business';
 
@@ -63,6 +67,8 @@ const SECTION_LABELS: Record<Section, string> = {
   team: 'Team',
   customers: 'Customers',
   orders: 'Orders',
+  vouchers: 'Vouchers',
+  inquiries: 'Inquiries',
   analytics: 'Analytics',
   business: 'Business',
 };
@@ -119,6 +125,8 @@ export default function AdminScreen() {
       {section === 'team' && <TeamSection />}
       {section === 'customers' && <CustomersSection />}
       {section === 'orders' && <OrdersSection />}
+      {section === 'vouchers' && <VouchersSection />}
+      {section === 'inquiries' && <InquiriesSection />}
       {section === 'analytics' && <AnalyticsSection />}
       {section === 'business' && <BusinessSection />}
     </View>
@@ -2109,6 +2117,266 @@ function TeamSection() {
         Staff sign in at planetaryeats.com/staff (kitchen) or /rider (riders) with the code you give them — those
         pages are separate from this admin panel and from customer sign-in.
       </Text>
+    </ScrollView>
+  );
+}
+
+function VouchersSection() {
+  const { fetchAllVouchers, createVoucherCode, deleteVoucher } = useStore();
+  const [vouchers, setVouchers] = useState<Voucher[] | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [code, setCode] = useState('');
+  const [type, setType] = useState<'percent' | 'fixed'>('fixed');
+  const [value, setValue] = useState('5');
+  const [description, setDescription] = useState('');
+  const [expiresAt, setExpiresAt] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = () => {
+    fetchAllVouchers().then(setVouchers);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addVoucher = async () => {
+    const trimmedCode = code.trim();
+    const parsedValue = Number(value);
+    if (!trimmedCode) {
+      setMessage('Enter a code.');
+      return;
+    }
+    if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+      setMessage('Enter a valid value.');
+      return;
+    }
+    if (!description.trim()) {
+      setMessage('Enter a description customers will see at checkout.');
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    const { error } = await createVoucherCode(
+      trimmedCode,
+      type,
+      parsedValue,
+      description.trim(),
+      expiresAt.trim() || null
+    );
+    setSaving(false);
+    if (error) {
+      setMessage(error);
+      return;
+    }
+    setCode('');
+    setValue('5');
+    setDescription('');
+    setExpiresAt('');
+    setShowAddForm(false);
+    load();
+  };
+
+  const removeVoucher = async (id: string) => {
+    await deleteVoucher(id);
+    load();
+  };
+
+  if (!vouchers) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.sectionContent}>
+      <View style={styles.privateBanner}>
+        <Text style={styles.privateBannerText}>
+          🎟️ No real payment happens here — a code just applies a discount at checkout. Personal "free bowl on your
+          10th order" rewards are issued automatically and show up here too, with no code — customers see those
+          directly in their own account.
+        </Text>
+      </View>
+
+      <Pressable style={styles.saveButton} onPress={() => setShowAddForm(!showAddForm)}>
+        <Text style={styles.saveButtonText}>{showAddForm ? 'Cancel' : '+ Create gift code'}</Text>
+      </Pressable>
+
+      {showAddForm && (
+        <View style={{ marginTop: spacing.md }}>
+          <Text style={typography.label}>CODE</Text>
+          <TextInput
+            value={code}
+            onChangeText={setCode}
+            autoCapitalize="characters"
+            placeholder="e.g. WELCOME5"
+            placeholderTextColor={colors.inkMuted}
+            style={styles.input}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>TYPE</Text>
+          <View style={styles.chipRow}>
+            {(['fixed', 'percent'] as const).map((t) => (
+              <Pressable key={t} style={[styles.chip, type === t && styles.chipActive]} onPress={() => setType(t)}>
+                <Text style={[styles.chipText, type === t && styles.chipTextActive]}>
+                  {t === 'fixed' ? 'Fixed (€)' : 'Percent (%)'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>
+            VALUE {type === 'fixed' ? '(€ off)' : '(% off)'}
+          </Text>
+          <TextInput
+            value={value}
+            onChangeText={setValue}
+            keyboardType="numeric"
+            style={styles.input}
+            placeholderTextColor={colors.inkMuted}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>DESCRIPTION (shown to the customer)</Text>
+          <TextInput
+            value={description}
+            onChangeText={setDescription}
+            placeholder="e.g. Welcome gift — 5€ off"
+            placeholderTextColor={colors.inkMuted}
+            style={styles.input}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>EXPIRES (optional, YYYY-MM-DD)</Text>
+          <TextInput
+            value={expiresAt}
+            onChangeText={setExpiresAt}
+            placeholder="Never expires if left blank"
+            placeholderTextColor={colors.inkMuted}
+            style={styles.input}
+          />
+
+          <Pressable style={styles.saveButton} onPress={addVoucher} disabled={saving}>
+            <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Create code'}</Text>
+          </Pressable>
+          {message && <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>{message}</Text>}
+        </View>
+      )}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>ALL VOUCHERS</Text>
+      {vouchers.length === 0 && <Text style={typography.bodyMuted}>No vouchers yet.</Text>}
+      {vouchers.map((v) => (
+        <View key={v.id} style={styles.rowCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={typography.body}>
+              {v.code ? v.code : 'Personal reward'} — {v.type === 'percent' ? `${v.value}%` : formatPrice(v.value)} off
+            </Text>
+            <Text style={typography.bodyMuted}>{v.description}</Text>
+            <View style={styles.badgeRow}>
+              {v.redeemed ? (
+                <View style={styles.bannedBadge}>
+                  <Text style={styles.bannedBadgeText}>Redeemed</Text>
+                </View>
+              ) : (
+                <View style={styles.adminBadge}>
+                  <Text style={styles.adminBadgeText}>Active</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          <Pressable style={styles.smallButton} onPress={() => removeVoucher(v.id)}>
+            <Text style={styles.smallButtonText}>Delete</Text>
+          </Pressable>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function InquiriesSection() {
+  const { fetchInquiries, setInquiryStatus } = useStore();
+  const [inquiries, setInquiries] = useState<Inquiry[] | null>(null);
+  const [filter, setFilter] = useState<'all' | Inquiry['type']>('all');
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = () => {
+    fetchInquiries().then(setInquiries);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const typeLabel = (t: Inquiry['type']) =>
+    t === 'courier' ? 'Become a courier' : t === 'business' ? 'For Business' : 'Partner with us';
+
+  const cycleStatus = async (inquiry: Inquiry) => {
+    const next: Inquiry['status'] =
+      inquiry.status === 'new' ? 'contacted' : inquiry.status === 'contacted' ? 'closed' : 'new';
+    setBusyId(inquiry.id);
+    await setInquiryStatus(inquiry.id, next);
+    load();
+    setBusyId(null);
+  };
+
+  if (!inquiries) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  const visible = filter === 'all' ? inquiries : inquiries.filter((i) => i.type === filter);
+
+  return (
+    <ScrollView contentContainerStyle={styles.sectionContent}>
+      <Text style={typography.label}>FILTER</Text>
+      <View style={styles.chipRow}>
+        {(['all', 'courier', 'business', 'partner'] as const).map((f) => (
+          <Pressable key={f} style={[styles.chip, filter === f && styles.chipActive]} onPress={() => setFilter(f)}>
+            <Text style={[styles.chipText, filter === f && styles.chipTextActive]}>
+              {f === 'all' ? 'All' : typeLabel(f)}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+        {visible.length} {visible.length === 1 ? 'INQUIRY' : 'INQUIRIES'}
+      </Text>
+      {visible.length === 0 && <Text style={typography.bodyMuted}>Nothing here yet.</Text>}
+      {visible.map((inquiry) => (
+        <View key={inquiry.id} style={styles.rowCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={typography.body}>
+              {inquiry.name} — {typeLabel(inquiry.type)}
+            </Text>
+            <Text style={typography.bodyMuted}>
+              {inquiry.email}
+              {inquiry.phone ? ` · ${inquiry.phone}` : ''}
+            </Text>
+            {inquiry.company && <Text style={typography.bodyMuted}>{inquiry.company}</Text>}
+            {inquiry.eventDate && <Text style={typography.bodyMuted}>Event date: {inquiry.eventDate}</Text>}
+            {inquiry.message && (
+              <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>{inquiry.message}</Text>
+            )}
+            <Text style={[typography.bodyMuted, { fontSize: 11, marginTop: spacing.xs }]}>
+              {new Date(inquiry.createdAt).toLocaleString()}
+            </Text>
+          </View>
+          <Pressable
+            style={[styles.smallButton, styles.adminToggleButton]}
+            onPress={() => cycleStatus(inquiry)}
+            disabled={busyId === inquiry.id}
+          >
+            <Text style={styles.smallButtonText}>
+              {busyId === inquiry.id
+                ? '…'
+                : inquiry.status === 'new'
+                ? 'Mark contacted'
+                : inquiry.status === 'contacted'
+                ? 'Mark closed'
+                : 'Reopen'}
+            </Text>
+          </Pressable>
+        </View>
+      ))}
     </ScrollView>
   );
 }

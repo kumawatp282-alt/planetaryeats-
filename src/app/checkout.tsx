@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { lineUnitPrice, useStore } from '../context/StoreContext';
+import { lineUnitPrice, useStore, Voucher } from '../context/StoreContext';
 import { useAuth } from '../context/AuthContext';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
 import { formatPrice } from '../lib/format';
@@ -33,11 +33,18 @@ export default function CheckoutScreen() {
     deliveryDistanceKm: deliveryDistance,
     deliveryCoords,
     appSettings,
+    fetchMyVouchers,
+    lookupVoucherByCode,
   } = useStore();
   const [payment, setPayment] = useState<PaymentMethod>('card');
   const [promoInput, setPromoInput] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [myVouchers, setMyVouchers] = useState<Voucher[]>([]);
+  const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
+  const [appliedVoucher, setAppliedVoucher] = useState<Voucher | null>(null);
+  const [checkingCode, setCheckingCode] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -45,8 +52,22 @@ export default function CheckoutScreen() {
     }
   }, [authLoading, user]);
 
+  useEffect(() => {
+    if (!user) return;
+    fetchMyVouchers().then((vs) => setMyVouchers(vs.filter((v) => !v.redeemed)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
   const promoCode = appSettings.promoCode.trim().toUpperCase();
-  const discount = promoApplied ? cartSubtotal * appSettings.promoDiscount : 0;
+  const activeVoucher = selectedVoucher ?? appliedVoucher;
+  const discount = activeVoucher
+    ? Math.min(
+        activeVoucher.type === 'percent' ? cartSubtotal * (activeVoucher.value / 100) : activeVoucher.value,
+        cartSubtotal
+      )
+    : promoApplied
+    ? cartSubtotal * appSettings.promoDiscount
+    : 0;
   const total = cartSubtotal - discount + (method === 'delivery' ? deliveryFee : 0);
   const openStatus = getOpenStatus(appSettings.openingHours);
   const belowMinimum = appSettings.minimumOrderValue > 0 && cartSubtotal < appSettings.minimumOrderValue;
@@ -57,10 +78,39 @@ export default function CheckoutScreen() {
     !belowMinimum &&
     (method === 'pickup' || (address.trim().length > 0 && deliveryStatus === 'ok'));
 
-  const applyPromo = () => {
-    if (promoCode && promoInput.trim().toUpperCase() === promoCode) {
-      setPromoApplied(true);
+  const selectVoucher = (v: Voucher) => {
+    if (selectedVoucher?.id === v.id) {
+      setSelectedVoucher(null);
+      return;
     }
+    setSelectedVoucher(v);
+    setPromoApplied(false);
+    setAppliedVoucher(null);
+    setPromoInput('');
+    setCodeError(null);
+  };
+
+  const applyCode = async () => {
+    const raw = promoInput.trim();
+    if (!raw) return;
+    setCodeError(null);
+    const upper = raw.toUpperCase();
+    if (promoCode && upper === promoCode) {
+      setPromoApplied(true);
+      setSelectedVoucher(null);
+      setAppliedVoucher(null);
+      return;
+    }
+    setCheckingCode(true);
+    const voucher = await lookupVoucherByCode(upper);
+    setCheckingCode(false);
+    if (!voucher) {
+      setCodeError("That code isn't valid — check the spelling or it may already be used.");
+      return;
+    }
+    setAppliedVoucher(voucher);
+    setPromoApplied(false);
+    setSelectedVoucher(null);
   };
 
   const checkDelivery = () => checkDeliveryAddress(address);
@@ -75,7 +125,9 @@ export default function CheckoutScreen() {
         lat: method === 'delivery' ? deliveryCoords?.lat : undefined,
         long: method === 'delivery' ? deliveryCoords?.long : undefined,
       },
-      option?.label ?? payment
+      option?.label ?? payment,
+      discount,
+      activeVoucher?.id
     );
 
     if (!order) {
@@ -205,31 +257,67 @@ export default function CheckoutScreen() {
           ))}
         </View>
         <Text style={[typography.bodyMuted, { marginTop: spacing.xs, fontSize: 12 }]}>
-          Payment isn't actually processed yet — this is a placeholder until a real payment provider is wired up.
+          Card payments are processed securely via Stripe. PayPal, bank transfer, and cash are recorded as your
+          stated preference — not yet charged automatically.
         </Text>
 
-        {promoCode.length > 0 && (
+        {myVouchers.length > 0 && (
           <>
-            <Text style={[typography.h3, { marginTop: spacing.lg }]}>Promo code</Text>
-            <View style={styles.promoRow}>
-              <TextInput
-                value={promoInput}
-                onChangeText={setPromoInput}
-                placeholder="Enter code"
-                placeholderTextColor={colors.inkMuted}
-                style={[styles.input, { flex: 1, marginTop: 0 }]}
-                autoCapitalize="characters"
-                editable={!promoApplied}
-              />
-              <Pressable
-                style={[styles.promoButton, promoApplied && styles.promoButtonDisabled]}
-                onPress={applyPromo}
-                disabled={promoApplied}
-              >
-                <Text style={styles.promoButtonText}>{promoApplied ? 'Applied' : 'Apply'}</Text>
-              </Pressable>
+            <Text style={[typography.h3, { marginTop: spacing.lg }]}>Your rewards</Text>
+            <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+              {myVouchers.map((v) => (
+                <Pressable
+                  key={v.id}
+                  style={[styles.voucherRow, selectedVoucher?.id === v.id && styles.voucherRowActive]}
+                  onPress={() => selectVoucher(v)}
+                >
+                  <Text
+                    style={[styles.voucherText, selectedVoucher?.id === v.id && styles.voucherTextActive]}
+                    numberOfLines={2}
+                  >
+                    {v.description}
+                  </Text>
+                  <Text style={[styles.voucherValue, selectedVoucher?.id === v.id && styles.voucherTextActive]}>
+                    {v.type === 'percent' ? `${v.value}% off` : `-${formatPrice(v.value)}`}
+                  </Text>
+                </Pressable>
+              ))}
             </View>
           </>
+        )}
+
+        <Text style={[typography.h3, { marginTop: spacing.lg }]}>Discount or gift code</Text>
+        <View style={styles.promoRow}>
+          <TextInput
+            value={promoInput}
+            onChangeText={(t) => {
+              setPromoInput(t);
+              setCodeError(null);
+            }}
+            placeholder="Enter code"
+            placeholderTextColor={colors.inkMuted}
+            style={[styles.input, { flex: 1, marginTop: 0 }]}
+            autoCapitalize="characters"
+            editable={!promoApplied && !appliedVoucher && !selectedVoucher}
+          />
+          <Pressable
+            style={[
+              styles.promoButton,
+              (promoApplied || !!appliedVoucher || !!selectedVoucher) && styles.promoButtonDisabled,
+            ]}
+            onPress={applyCode}
+            disabled={promoApplied || !!appliedVoucher || !!selectedVoucher || checkingCode}
+          >
+            <Text style={styles.promoButtonText}>
+              {checkingCode ? '...' : promoApplied || appliedVoucher ? 'Applied' : 'Apply'}
+            </Text>
+          </Pressable>
+        </View>
+        {codeError && <Text style={styles.deliveryBad}>{codeError}</Text>}
+        {myVouchers.length > 0 && (
+          <Text style={[typography.bodyMuted, { marginTop: spacing.xs, fontSize: 12 }]}>
+            Only one reward or code can be used per order.
+          </Text>
         )}
 
         <Text style={[typography.h3, { marginTop: spacing.lg }]}>Order summary</Text>
@@ -248,9 +336,11 @@ export default function CheckoutScreen() {
             <Text style={typography.bodyMuted}>Subtotal</Text>
             <Text style={typography.body}>{formatPrice(cartSubtotal)}</Text>
           </View>
-          {promoApplied && (
+          {discount > 0 && (
             <View style={styles.summaryRow}>
-              <Text style={[typography.bodyMuted, { color: colors.forest }]}>Promo ({promoCode})</Text>
+              <Text style={[typography.bodyMuted, { color: colors.forest }]} numberOfLines={1}>
+                {activeVoucher ? activeVoucher.description : `Promo (${promoCode})`}
+              </Text>
               <Text style={[typography.body, { color: colors.forest }]}>-{formatPrice(discount)}</Text>
             </View>
           )}
@@ -439,6 +529,35 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontWeight: '700',
     fontSize: 13,
+  },
+  voucherRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  voucherRowActive: {
+    backgroundColor: colors.forest,
+    borderColor: colors.forest,
+  },
+  voucherText: {
+    flex: 1,
+    fontWeight: '600',
+    color: colors.ink,
+    fontSize: 13,
+  },
+  voucherValue: {
+    fontWeight: '700',
+    color: colors.forest,
+    fontSize: 13,
+  },
+  voucherTextActive: {
+    color: colors.white,
   },
   summaryCard: {
     backgroundColor: colors.card,

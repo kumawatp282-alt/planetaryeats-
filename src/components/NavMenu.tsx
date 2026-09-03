@@ -18,6 +18,14 @@ const LINKS: { label: string; path: string; icon: keyof typeof Ionicons.glyphMap
   { label: 'Profile', path: '/profile', icon: 'person-outline' },
 ];
 
+const MORE_LINKS: { label: string; path: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { label: 'Rewards', path: '/rewards', icon: 'star-outline' },
+  { label: 'Need help?', path: '/help', icon: 'help-circle-outline' },
+  { label: 'Become a courier', path: '/courier', icon: 'bicycle-outline' },
+  { label: 'For Business', path: '/business', icon: 'briefcase-outline' },
+  { label: 'Partner with us', path: '/partner', icon: 'people-outline' },
+];
+
 const LEGAL_LINKS: { label: string; path: string }[] = [
   { label: 'Impressum', path: '/impressum' },
   { label: 'Datenschutz', path: '/datenschutz' },
@@ -32,6 +40,22 @@ export default function NavMenu({ visible, onClose }: Props) {
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={styles.panel}>
           {LINKS.map((link) => (
+            <Pressable
+              key={link.path}
+              style={styles.row}
+              onPress={() => {
+                onClose();
+                router.push(link.path as any);
+              }}
+            >
+              <Ionicons name={link.icon} size={18} color={colors.forest} />
+              <Text style={[typography.body, { marginLeft: spacing.sm }]}>{link.label}</Text>
+            </Pressable>
+          ))}
+
+          <View style={styles.divider} />
+
+          {MORE_LINKS.map((link) => (
             <Pressable
               key={link.path}
               style={styles.row}

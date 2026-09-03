@@ -263,6 +263,47 @@ export interface MenuItemInput {
   sortOrder: number;
 }
 
+// A discount, either a personal stamp-card reward (userId set, code null,
+// auto-issued every 10th order) or an admin-issued gift code (userId null
+// until redeemed, code set) — see supabase/loyalty_schema.sql.
+export interface Voucher {
+  id: string;
+  userId: string | null;
+  code: string | null;
+  type: 'percent' | 'fixed';
+  value: number;
+  description: string;
+  redeemed: boolean;
+  redeemedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+// "Become a courier", "For Business" (catering/corporate), and "Partner
+// with us" all submit into this one table, distinguished by `type`.
+export interface Inquiry {
+  id: string;
+  type: 'courier' | 'business' | 'partner';
+  name: string;
+  email: string;
+  phone: string | null;
+  company: string | null;
+  eventDate: string | null;
+  message: string | null;
+  status: 'new' | 'contacted' | 'closed';
+  createdAt: string;
+}
+
+export interface InquiryInput {
+  type: Inquiry['type'];
+  name: string;
+  email: string;
+  phone?: string;
+  company?: string;
+  eventDate?: string;
+  message?: string;
+}
+
 const DEFAULT_APP_SETTINGS: AppSettings = {
   restaurantName: DEFAULT_RESTAURANT.name,
   restaurantLat: DEFAULT_RESTAURANT.lat,
@@ -434,7 +475,12 @@ interface StoreContextValue extends StoreState {
   updateQuantity: (lineId: string, quantity: number) => void;
   removeFromCart: (lineId: string) => void;
   clearCart: () => void;
-  placeOrder: (fulfillment: FulfillmentDetails, paymentMethod: string) => Promise<Order | null>;
+  placeOrder: (
+    fulfillment: FulfillmentDetails,
+    paymentMethod: string,
+    discount?: number,
+    voucherId?: string
+  ) => Promise<Order | null>;
   logManualOrder: (input: ManualOrderInput) => Promise<{ error: string | null }>;
   advanceOrderStatus: (orderId: string) => void;
   cartSubtotal: number;
@@ -529,6 +575,24 @@ interface StoreContextValue extends StoreState {
   deleteNutritionEntry: (id: string) => Promise<{ error: string | null }>;
   fetchNutritionGoals: () => Promise<NutritionGoals>;
   updateNutritionGoals: (goals: NutritionGoals) => Promise<{ error: string | null }>;
+  // Loyalty vouchers — the signed-in customer's own personal rewards, plus
+  // looking up and redeeming an admin-issued gift code typed at checkout.
+  fetchMyVouchers: () => Promise<Voucher[]>;
+  lookupVoucherByCode: (code: string) => Promise<Voucher | null>;
+  redeemVoucher: (id: string) => Promise<{ error: string | null }>;
+  submitInquiry: (input: InquiryInput) => Promise<{ error: string | null }>;
+  // Admin-only
+  fetchAllVouchers: () => Promise<Voucher[]>;
+  createVoucherCode: (
+    code: string,
+    type: Voucher['type'],
+    value: number,
+    description: string,
+    expiresAt: string | null
+  ) => Promise<{ error: string | null }>;
+  deleteVoucher: (id: string) => Promise<{ error: string | null }>;
+  fetchInquiries: () => Promise<Inquiry[]>;
+  setInquiryStatus: (id: string, status: Inquiry['status']) => Promise<{ error: string | null }>;
 }
 
 const StoreContext = createContext<StoreContextValue | undefined>(undefined);
@@ -635,6 +699,36 @@ function rowToInventoryMovement(row: any): InventoryMovement {
     type: row.type,
     quantity: Number(row.quantity),
     note: row.note ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToVoucher(row: any): Voucher {
+  return {
+    id: row.id,
+    userId: row.user_id ?? null,
+    code: row.code ?? null,
+    type: row.type,
+    value: Number(row.value),
+    description: row.description,
+    redeemed: Boolean(row.redeemed),
+    redeemedAt: row.redeemed_at ?? null,
+    expiresAt: row.expires_at ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToInquiry(row: any): Inquiry {
+  return {
+    id: row.id,
+    type: row.type,
+    name: row.name,
+    email: row.email,
+    phone: row.phone ?? null,
+    company: row.company ?? null,
+    eventDate: row.event_date ?? null,
+    message: row.message ?? null,
+    status: row.status,
     createdAt: row.created_at,
   };
 }
@@ -782,13 +876,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       updateQuantity: (lineId, quantity) => dispatch({ type: 'UPDATE_QUANTITY', lineId, quantity }),
       removeFromCart: (lineId) => dispatch({ type: 'REMOVE_FROM_CART', lineId }),
       clearCart: () => dispatch({ type: 'CLEAR_CART' }),
-      placeOrder: async (fulfillment, paymentMethod) => {
+      placeOrder: async (fulfillment, paymentMethod, discount = 0, voucherId) => {
         if (state.cart.length === 0 || !user) return null;
+        const total = Math.max(
+          cartTotal(state.cart) + (fulfillment.method === 'delivery' ? DELIVERY_FEE : 0) - discount,
+          0
+        );
         const order: Order = {
           id: `PE-${Math.floor(100000 + Math.random() * 900000)}`,
           userId: user.id,
           lines: state.cart,
-          total: cartTotal(state.cart) + (fulfillment.method === 'delivery' ? DELIVERY_FEE : 0),
+          total,
           status: 'placed',
           fulfillment,
           paymentMethod,
@@ -812,6 +910,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           source: order.source,
         });
         if (error) return null;
+        if (voucherId) {
+          // Already validated client-side moments earlier; fire-and-forget
+          // so a hiccup here never undoes an order that already succeeded.
+          supabase.rpc('redeem_voucher', { p_voucher_id: voucherId }).then();
+        }
         dispatch({ type: 'PREPEND_ORDER', order });
         return order;
       },
@@ -1212,6 +1315,78 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .from('profiles')
           .update({ daily_calorie_goal: goals.calories, daily_protein_goal: goals.protein })
           .eq('id', user.id);
+        return { error: error?.message ?? null };
+      },
+      fetchMyVouchers: async () => {
+        if (!user) return [];
+        const { data, error } = await supabase
+          .from('vouchers')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+        if (error || !data) return [];
+        return data.map(rowToVoucher);
+      },
+      lookupVoucherByCode: async (code) => {
+        const trimmed = code.trim().toUpperCase();
+        if (!trimmed) return null;
+        const { data, error } = await supabase
+          .from('vouchers')
+          .select('*')
+          .eq('code', trimmed)
+          .eq('redeemed', false)
+          .maybeSingle();
+        if (error || !data) return null;
+        return rowToVoucher(data);
+      },
+      redeemVoucher: async (id) => {
+        const { error } = await supabase.rpc('redeem_voucher', { p_voucher_id: id });
+        return { error: error?.message ?? null };
+      },
+      submitInquiry: async (input) => {
+        const { error } = await supabase.from('inquiries').insert({
+          type: input.type,
+          name: input.name.trim(),
+          email: input.email.trim(),
+          phone: input.phone?.trim() || null,
+          company: input.company?.trim() || null,
+          event_date: input.eventDate || null,
+          message: input.message?.trim() || null,
+        });
+        return { error: error?.message ?? null };
+      },
+      fetchAllVouchers: async () => {
+        const { data, error } = await supabase
+          .from('vouchers')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error || !data) return [];
+        return data.map(rowToVoucher);
+      },
+      createVoucherCode: async (code, type, value, description, expiresAt) => {
+        const { error } = await supabase.from('vouchers').insert({
+          code: code.trim().toUpperCase(),
+          type,
+          value,
+          description,
+          expires_at: expiresAt,
+        });
+        return { error: error?.message ?? null };
+      },
+      deleteVoucher: async (id) => {
+        const { error } = await supabase.from('vouchers').delete().eq('id', id);
+        return { error: error?.message ?? null };
+      },
+      fetchInquiries: async () => {
+        const { data, error } = await supabase
+          .from('inquiries')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error || !data) return [];
+        return data.map(rowToInquiry);
+      },
+      setInquiryStatus: async (id, status) => {
+        const { error } = await supabase.from('inquiries').update({ status }).eq('id', id);
         return { error: error?.message ?? null };
       },
     };
