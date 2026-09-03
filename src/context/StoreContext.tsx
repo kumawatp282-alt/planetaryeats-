@@ -593,6 +593,7 @@ interface StoreContextValue extends StoreState {
   deleteVoucher: (id: string) => Promise<{ error: string | null }>;
   fetchInquiries: () => Promise<Inquiry[]>;
   setInquiryStatus: (id: string, status: Inquiry['status']) => Promise<{ error: string | null }>;
+  deleteInquiry: (id: string) => Promise<{ error: string | null }>;
 }
 
 const StoreContext = createContext<StoreContextValue | undefined>(undefined);
@@ -1387,6 +1388,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       },
       setInquiryStatus: async (id, status) => {
         const { error } = await supabase.from('inquiries').update({ status }).eq('id', id);
+        return { error: error?.message ?? null };
+      },
+      deleteInquiry: async (id) => {
+        const { error } = await supabase.from('inquiries').delete().eq('id', id);
         return { error: error?.message ?? null };
       },
     };

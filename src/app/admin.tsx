@@ -2292,7 +2292,7 @@ function VouchersSection() {
 }
 
 function InquiriesSection() {
-  const { fetchInquiries, setInquiryStatus } = useStore();
+  const { fetchInquiries, setInquiryStatus, deleteInquiry } = useStore();
   const [inquiries, setInquiries] = useState<Inquiry[] | null>(null);
   const [filter, setFilter] = useState<'all' | Inquiry['type']>('all');
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -2314,6 +2314,14 @@ function InquiriesSection() {
       inquiry.status === 'new' ? 'contacted' : inquiry.status === 'contacted' ? 'closed' : 'new';
     setBusyId(inquiry.id);
     await setInquiryStatus(inquiry.id, next);
+    load();
+    setBusyId(null);
+  };
+
+  const remove = async (inquiry: Inquiry) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Delete this inquiry from ${inquiry.name}?`)) return;
+    setBusyId(inquiry.id);
+    await deleteInquiry(inquiry.id);
     load();
     setBusyId(null);
   };
@@ -2360,6 +2368,7 @@ function InquiriesSection() {
               {new Date(inquiry.createdAt).toLocaleString()}
             </Text>
           </View>
+          <View style={{ gap: spacing.xs }}>
           <Pressable
             style={[styles.smallButton, styles.adminToggleButton]}
             onPress={() => cycleStatus(inquiry)}
@@ -2375,6 +2384,10 @@ function InquiriesSection() {
                 : 'Reopen'}
             </Text>
           </Pressable>
+          <Pressable style={styles.smallButton} onPress={() => remove(inquiry)} disabled={busyId === inquiry.id}>
+            <Text style={styles.smallButtonText}>Delete</Text>
+          </Pressable>
+          </View>
         </View>
       ))}
     </ScrollView>
