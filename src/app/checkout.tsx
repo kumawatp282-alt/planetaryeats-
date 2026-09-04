@@ -142,13 +142,11 @@ export default function CheckoutScreen() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             orderId: order.id,
-            lines: order.lines.map((line) => ({
-              name: line.item.name,
-              unitPrice: lineUnitPrice(line),
-              quantity: line.quantity,
-            })),
-            deliveryFee: order.fulfillment.method === 'delivery' ? deliveryFee : 0,
-            discount,
+            // Only structural facts — the server independently recomputes
+            // every price from the database, it never trusts an amount
+            // from the browser (see api/create-checkout-session.js).
+            voucherId: activeVoucher?.id,
+            promoCode: promoApplied ? promoCode : undefined,
             origin: window.location.origin,
           }),
         });
