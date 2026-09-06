@@ -210,8 +210,11 @@ function IdleScreen({ onStart }: { onStart: () => void }) {
         <View style={styles.idleBrandLine} />
       </View>
       <View style={styles.zamzamBadge}>
-        <Text style={styles.zamzamEmoji}>🥙</Text>
-        <Text style={styles.zamzamText}>ZAM ZAM DÖNER</Text>
+        <Image
+          source={require('../assets/zamzam-doner-logo.png')}
+          style={styles.zamzamLogo}
+          resizeMode="contain"
+        />
       </View>
       <Text style={styles.idleTitle}>Welcome!</Text>
       <Text style={styles.idleSubtitle}>Tap anywhere to start your order</Text>
@@ -446,23 +449,15 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   zamzamBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#1A1A1A',
-    borderRadius: radii.pill,
-    paddingVertical: spacing.sm + 2,
+    borderRadius: radii.lg,
+    paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.xl,
   },
-  zamzamEmoji: {
-    fontSize: 22,
-    marginRight: spacing.sm,
-  },
-  zamzamText: {
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: '#F0923B',
+  zamzamLogo: {
+    width: 260,
+    height: 127,
   },
   idleTitle: {
     fontSize: 40,
