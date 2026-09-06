@@ -14,6 +14,10 @@ interface Props {
   item: AdminMenuItem | null; // null = adding a new dish
   onClose: () => void;
   onSaved: () => void;
+  // Pre-fills group/tag fields when adding a new dish from a shop-scoped
+  // tab (e.g. Zam Zam Doner) so every dish added there is correctly
+  // grouped without the admin having to type the group id by hand.
+  defaultGroup?: { id: string; label: string; tag: string };
 }
 
 const CATEGORIES: Category[] = ['Bowls', 'Drinks', 'Desserts'];
@@ -67,7 +71,7 @@ function ChipInput({ values, onChange, placeholder }: { values: string[]; onChan
   );
 }
 
-export default function MenuItemEditorModal({ visible, item, onClose, onSaved }: Props) {
+export default function MenuItemEditorModal({ visible, item, onClose, onSaved, defaultGroup }: Props) {
   const { upsertMenuItem, uploadDishPhoto } = useStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -151,7 +155,7 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved }:
       setCategory('Bowls');
       setEmoji('🍽️');
       setImageUrl(null);
-      setTags([]);
+      setTags(defaultGroup ? [defaultGroup.tag] : []);
       setAllergens([]);
       setIngredients('');
       setProteinOptions([]);
@@ -170,8 +174,8 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved }:
       setFiber('');
       setCarbs('');
       setFat('');
-      setGroupId('');
-      setGroupLabel('');
+      setGroupId(defaultGroup?.id ?? '');
+      setGroupLabel(defaultGroup?.label ?? '');
       setIsActive(true);
     }
   }, [visible, item]);

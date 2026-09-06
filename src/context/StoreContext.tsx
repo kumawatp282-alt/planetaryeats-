@@ -170,6 +170,10 @@ export interface InventoryItem {
   // engineering) and turns a logged waste quantity into a waste cost.
   costPerUnit: number | null;
   supplier: string | null;
+  // Which shop this ingredient belongs to — 'planetary-eats' (default,
+  // today's only shop) or 'zam-zam-doner'. Keeps a second shop's stock
+  // numbers from ever mixing into the first's, without a parallel table.
+  shop: string;
 }
 
 export interface InventoryItemInput {
@@ -540,8 +544,10 @@ interface StoreContextValue extends StoreState {
   uploadDishPhoto: (file: File) => Promise<{ url: string | null; error: string | null }>;
   fetchChecklistState: () => Promise<Record<string, boolean>>;
   setChecklistItem: (itemId: string, done: boolean) => Promise<{ error: string | null }>;
-  fetchInventoryItems: () => Promise<InventoryItem[]>;
-  upsertInventoryItem: (input: InventoryItemInput) => Promise<{ error: string | null }>;
+  // `shop` defaults to 'planetary-eats' so every existing call site keeps
+  // working unchanged; pass 'zam-zam-doner' to scope to that shop instead.
+  fetchInventoryItems: (shop?: string) => Promise<InventoryItem[]>;
+  upsertInventoryItem: (input: InventoryItemInput, shop?: string) => Promise<{ error: string | null }>;
   setInventoryStock: (id: string, currentStock: number) => Promise<{ error: string | null }>;
   deleteInventoryItem: (id: string) => Promise<{ error: string | null }>;
   fetchInventoryMovements: () => Promise<InventoryMovement[]>;
@@ -679,6 +685,7 @@ function rowToInventoryItem(row: any): InventoryItem {
     fatPerUnit: nullableNum(row.fat_per_unit),
     costPerUnit: nullableNum(row.cost_per_unit),
     supplier: row.supplier ?? null,
+    shop: row.shop ?? 'planetary-eats',
   };
 }
 
@@ -1127,16 +1134,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .upsert({ item_id: itemId, done, updated_at: new Date().toISOString() });
         return { error: error?.message ?? null };
       },
-      fetchInventoryItems: async () => {
+      fetchInventoryItems: async (shop = 'planetary-eats') => {
         const { data, error } = await supabase
           .from('inventory_items')
           .select('*')
+          .eq('shop', shop)
           .order('category', { ascending: true })
           .order('name', { ascending: true });
         if (error || !data) return [];
         return data.map(rowToInventoryItem);
       },
-      upsertInventoryItem: async (input) => {
+      upsertInventoryItem: async (input, shop = 'planetary-eats') => {
         const payload = {
           name: input.name,
           category: input.category,
@@ -1152,6 +1160,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           fat_per_unit: input.fatPerUnit,
           cost_per_unit: input.costPerUnit,
           supplier: input.supplier,
+          shop,
           updated_at: new Date().toISOString(),
         };
         const { error } = input.id

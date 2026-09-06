@@ -56,7 +56,8 @@ type Section =
   | 'vouchers'
   | 'inquiries'
   | 'analytics'
-  | 'business';
+  | 'business'
+  | 'zamzam';
 
 const SECTION_LABELS: Record<Section, string> = {
   dashboard: 'Dashboard',
@@ -71,7 +72,18 @@ const SECTION_LABELS: Record<Section, string> = {
   inquiries: 'Inquiries',
   analytics: 'Analytics',
   business: 'Business',
+  zamzam: 'Zam Zam Doner',
 };
+
+// Zam Zam Doner is a second, separate shop managed inside this same admin
+// panel (see supabase/zamzam_doner_schema.sql). Its dishes are regular
+// menu_items grouped under this id — the same mechanism already used for
+// the Chili Döner Freising / 7 Days Freising partner items — and its
+// inventory shares inventory_items with everything else, tagged by shop.
+const ZAMZAM_SHOP = 'zam-zam-doner';
+const ZAMZAM_GROUP_ID = 'zam-zam-doner';
+const ZAMZAM_GROUP_LABEL = 'Zam Zam Doner';
+const ZAMZAM_TAG = 'From Zam Zam Doner';
 
 export default function AdminScreen() {
   const { user, loading, isAdmin } = useAuth();
@@ -129,6 +141,7 @@ export default function AdminScreen() {
       {section === 'inquiries' && <InquiriesSection />}
       {section === 'analytics' && <AnalyticsSection />}
       {section === 'business' && <BusinessSection />}
+      {section === 'zamzam' && <ZamZamSection />}
     </View>
   );
 }
@@ -504,10 +517,18 @@ function InventoryRow({
   item,
   movements,
   onChanged,
+  shop = 'planetary-eats',
+  allowMovementLogging = true,
 }: {
   item: InventoryItem;
   movements: InventoryMovement[];
   onChanged: () => void;
+  shop?: string;
+  // Movements have no shop tag of their own (safe, since they're always
+  // looked up by itemId) — but a shop with no dashboard/waste-reporting
+  // of its own yet has no use for logging them, so this stays off there
+  // rather than silently building up movement history nothing reads.
+  allowMovementLogging?: boolean;
 }) {
   const { setInventoryStock, upsertInventoryItem, deleteInventoryItem, logInventoryMovement } = useStore();
   const [stockDraft, setStockDraft] = useState(String(item.currentStock));
@@ -583,7 +604,7 @@ function InventoryRow({
       fatPerUnit: fatPerUnit.trim() ? Number(fatPerUnit) : null,
       costPerUnit: costPerUnit.trim() ? Number(costPerUnit) : null,
       supplier: supplier.trim() || null,
-    });
+    }, shop);
     setSaving(false);
     if (error) {
       setMessage(error);
@@ -668,9 +689,11 @@ function InventoryRow({
         </View>
 
         <View style={{ flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm }}>
-          <Pressable style={styles.smallButton} onPress={() => setLogging(!logging)}>
-            <Text style={styles.smallButtonText}>{logging ? 'Close' : 'Log'}</Text>
-          </Pressable>
+          {allowMovementLogging && (
+            <Pressable style={styles.smallButton} onPress={() => setLogging(!logging)}>
+              <Text style={styles.smallButtonText}>{logging ? 'Close' : 'Log'}</Text>
+            </Pressable>
+          )}
           <Pressable style={styles.smallButton} onPress={() => setEditing(!editing)}>
             <Text style={styles.smallButtonText}>{editing ? 'Close' : 'Edit'}</Text>
           </Pressable>
@@ -2751,7 +2774,12 @@ function DashboardSection() {
   const periodOrders = orders.filter((o) => inPeriod(o.placedAt));
   const cancelledOrders = periodOrders.filter((o) => o.status === 'cancelled');
   const staffOrders = periodOrders.filter((o) => o.source === 'staff');
-  const revenueOrders = periodOrders.filter((o) => o.status !== 'cancelled' && o.source !== 'staff');
+  // Excludes orders that are entirely Zam Zam Doner items (that shop has
+  // its own separate Sales tab) — an order mixing both shops' items still
+  // counts its Planetary Eats lines here, just not toward this dish list.
+  const revenueOrders = periodOrders.filter(
+    (o) => o.status !== 'cancelled' && o.source !== 'staff' && o.lines.some((line) => line.item.groupId !== ZAMZAM_GROUP_ID)
+  );
 
   const revenue = revenueOrders.reduce((sum, o) => sum + o.total, 0);
   const orderCount = revenueOrders.length;
@@ -2760,6 +2788,7 @@ function DashboardSection() {
   const dishStats = new Map<string, { name: string; qty: number; revenue: number }>();
   revenueOrders.forEach((o) => {
     o.lines.forEach((line) => {
+      if (line.item.groupId === ZAMZAM_GROUP_ID) return;
       const key = line.item.id;
       const entry = dishStats.get(key) ?? { name: line.item.name, qty: 0, revenue: 0 };
       entry.qty += line.quantity;
@@ -3387,6 +3416,346 @@ function BusinessSection() {
         </View>
       )}
     </ScrollView>
+  );
+}
+
+type ZamZamTab = 'menu' | 'inventory' | 'sales';
+const ZAMZAM_TAB_LABELS: Record<ZamZamTab, string> = {
+  menu: 'Menu',
+  inventory: 'Inventory',
+  sales: 'Sales',
+};
+
+function ZamZamSection() {
+  const [tab, setTab] = useState<ZamZamTab>('menu');
+  return (
+    <ScrollView contentContainerStyle={styles.sectionContent}>
+      <View style={styles.privateBanner}>
+        <Text style={styles.privateBannerText}>
+          🥙 Zam Zam Doner — a separate shop managed here alongside Planetary Eats. Its dishes are orderable on the
+          site right away; its sales and inventory numbers are kept completely separate from Planetary Eats' own.
+        </Text>
+      </View>
+
+      <View style={styles.subTabRow}>
+        {(Object.keys(ZAMZAM_TAB_LABELS) as ZamZamTab[]).map((t) => (
+          <Pressable key={t} style={[styles.subTab, tab === t && styles.subTabActive]} onPress={() => setTab(t)}>
+            <Text style={[styles.subTabText, tab === t && styles.subTabTextActive]}>{ZAMZAM_TAB_LABELS[t]}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {tab === 'menu' && <ZamZamMenuTab />}
+      {tab === 'inventory' && <ZamZamInventoryTab />}
+      {tab === 'sales' && <ZamZamSalesTab />}
+    </ScrollView>
+  );
+}
+
+function ZamZamMenuTab() {
+  const { fetchAllMenuItemsAdmin, setMenuItemActive, deleteMenuItem } = useStore();
+  const [items, setItems] = useState<AdminMenuItem[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [editingItem, setEditingItem] = useState<AdminMenuItem | null>(null);
+
+  const load = () => {
+    fetchAllMenuItemsAdmin().then((all) => setItems(all.filter((i) => i.groupId === ZAMZAM_GROUP_ID)));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openAdd = () => {
+    setEditingItem(null);
+    setEditorVisible(true);
+  };
+
+  const toggleActive = async (item: AdminMenuItem) => {
+    setBusyId(item.id);
+    await setMenuItemActive(item.id, !item.isActive);
+    load();
+    setBusyId(null);
+  };
+
+  const remove = async (item: AdminMenuItem) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Permanently delete "${item.name}"? This can't be undone.`)) {
+      return;
+    }
+    setBusyId(item.id);
+    await deleteMenuItem(item.id);
+    load();
+    setBusyId(null);
+  };
+
+  if (!items) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  return (
+    <View>
+      <Pressable style={styles.saveButton} onPress={openAdd}>
+        <Text style={styles.saveButtonText}>+ Add dish</Text>
+      </Pressable>
+
+      {items.length === 0 && (
+        <Text style={[typography.bodyMuted, { marginTop: spacing.md }]}>
+          No dishes yet — add the first one above.
+        </Text>
+      )}
+      {items.map((item) => (
+        <View key={item.id} style={[styles.rowCard, !item.isActive && styles.rowCardHidden]}>
+          {item.dishImage ? (
+            <Image source={item.dishImage} style={styles.menuThumb} resizeMode="cover" />
+          ) : (
+            <View style={[styles.menuThumb, styles.menuThumbEmoji]}>
+              <Text style={{ fontSize: 20 }}>{item.emoji}</Text>
+            </View>
+          )}
+          <View style={{ flex: 1, marginLeft: spacing.sm }}>
+            <Text style={typography.body}>{item.name}</Text>
+            <Text style={typography.bodyMuted}>
+              {formatPrice(item.price)}
+              {!item.isActive ? ' · Hidden' : ''}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+            <Pressable
+              style={styles.smallButton}
+              onPress={() => {
+                setEditingItem(item);
+                setEditorVisible(true);
+              }}
+            >
+              <Text style={styles.smallButtonText}>Edit</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.smallButton, styles.adminToggleButton]}
+              onPress={() => toggleActive(item)}
+              disabled={busyId === item.id}
+            >
+              <Text style={styles.smallButtonText}>{busyId === item.id ? '…' : item.isActive ? 'Hide' : 'Show'}</Text>
+            </Pressable>
+            <Pressable style={[styles.smallButton, styles.banButton]} onPress={() => remove(item)} disabled={busyId === item.id}>
+              <Text style={styles.smallButtonText}>Delete</Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+
+      <MenuItemEditorModal
+        visible={editorVisible}
+        item={editingItem}
+        onClose={() => setEditorVisible(false)}
+        onSaved={load}
+        defaultGroup={{ id: ZAMZAM_GROUP_ID, label: ZAMZAM_GROUP_LABEL, tag: ZAMZAM_TAG }}
+      />
+    </View>
+  );
+}
+
+function ZamZamInventoryTab() {
+  const { fetchInventoryItems, upsertInventoryItem } = useStore();
+  const [items, setItems] = useState<InventoryItem[] | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('');
+  const [unit, setUnit] = useState('kg');
+  const [currentStock, setCurrentStock] = useState('0');
+  const [parLevel, setParLevel] = useState('0');
+  const [reorderThreshold, setReorderThreshold] = useState('0');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = () => {
+    fetchInventoryItems(ZAMZAM_SHOP).then(setItems);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const resetForm = () => {
+    setName('');
+    setCategory('');
+    setUnit('kg');
+    setCurrentStock('0');
+    setParLevel('0');
+    setReorderThreshold('0');
+    setMessage(null);
+  };
+
+  const addIngredient = async () => {
+    const parsedCurrent = Number(currentStock);
+    const parsedPar = Number(parLevel);
+    const parsedThreshold = Number(reorderThreshold);
+    if (!name.trim() || !unit.trim()) {
+      setMessage('Enter at least a name and a unit.');
+      return;
+    }
+    if (![parsedCurrent, parsedPar, parsedThreshold].every((n) => Number.isFinite(n) && n >= 0)) {
+      setMessage('Stock, par level and reorder threshold must be valid numbers.');
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    const { error } = await upsertInventoryItem(
+      {
+        name: name.trim(),
+        category: category.trim() || 'Other',
+        unit: unit.trim(),
+        currentStock: parsedCurrent,
+        parLevel: parsedPar,
+        reorderThreshold: parsedThreshold,
+        notes: null,
+        caloriesPerUnit: null,
+        proteinPerUnit: null,
+        fiberPerUnit: null,
+        carbsPerUnit: null,
+        fatPerUnit: null,
+        costPerUnit: null,
+        supplier: null,
+      },
+      ZAMZAM_SHOP
+    );
+    setSaving(false);
+    if (error) {
+      setMessage(error);
+      return;
+    }
+    resetForm();
+    setShowAddForm(false);
+    load();
+  };
+
+  if (!items) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  return (
+    <View>
+      <Pressable style={styles.saveButton} onPress={() => setShowAddForm(!showAddForm)}>
+        <Text style={styles.saveButtonText}>{showAddForm ? 'Cancel' : '+ Add ingredient'}</Text>
+      </Pressable>
+
+      {showAddForm && (
+        <View style={{ marginTop: spacing.md }}>
+          <Text style={typography.label}>NAME</Text>
+          <TextInput value={name} onChangeText={setName} style={styles.input} placeholderTextColor={colors.inkMuted} />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>CATEGORY</Text>
+          <TextInput
+            value={category}
+            onChangeText={setCategory}
+            placeholder="e.g. Meat, Bread, Sauces"
+            placeholderTextColor={colors.inkMuted}
+            style={styles.input}
+          />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>UNIT</Text>
+          <View style={styles.chipRow}>
+            {UNIT_PRESETS.map((u) => (
+              <Pressable key={u} style={[styles.chip, unit === u && styles.chipActive]} onPress={() => setUnit(u)}>
+                <Text style={[styles.chipText, unit === u && styles.chipTextActive]}>{u}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>CURRENT STOCK</Text>
+          <TextInput value={currentStock} onChangeText={setCurrentStock} keyboardType="numeric" style={styles.input} />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>PAR LEVEL</Text>
+          <TextInput value={parLevel} onChangeText={setParLevel} keyboardType="numeric" style={styles.input} />
+
+          <Text style={[typography.label, { marginTop: spacing.md }]}>REORDER THRESHOLD</Text>
+          <TextInput value={reorderThreshold} onChangeText={setReorderThreshold} keyboardType="numeric" style={styles.input} />
+
+          <Pressable style={styles.saveButton} onPress={addIngredient} disabled={saving}>
+            <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Add ingredient'}</Text>
+          </Pressable>
+          {message && <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>{message}</Text>}
+        </View>
+      )}
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>INGREDIENTS</Text>
+      {items.length === 0 && <Text style={typography.bodyMuted}>No ingredients yet.</Text>}
+      {items.map((item) => (
+        <InventoryRow
+          key={item.id}
+          item={item}
+          movements={[]}
+          shop={ZAMZAM_SHOP}
+          allowMovementLogging={false}
+          onChanged={load}
+        />
+      ))}
+    </View>
+  );
+}
+
+function ZamZamSalesTab() {
+  const { fetchAllOrders } = useStore();
+  const [orders, setOrders] = useState<Order[] | null>(null);
+
+  useEffect(() => {
+    fetchAllOrders().then(setOrders);
+  }, [fetchAllOrders]);
+
+  if (!orders) {
+    return <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.xl }} />;
+  }
+
+  const zamzamLines = orders
+    .filter((o) => o.status !== 'cancelled')
+    .flatMap((o) => o.lines.map((line) => ({ orderId: o.id, line })))
+    .filter(({ line }) => line.item.groupId === ZAMZAM_GROUP_ID);
+
+  const revenue = zamzamLines.reduce((sum, { line }) => sum + lineUnitPrice(line) * line.quantity, 0);
+  const itemsSold = zamzamLines.reduce((sum, { line }) => sum + line.quantity, 0);
+  const orderCount = new Set(zamzamLines.map(({ orderId }) => orderId)).size;
+
+  const byDish = new Map<string, { qty: number; revenue: number }>();
+  zamzamLines.forEach(({ line }) => {
+    const existing = byDish.get(line.item.name) ?? { qty: 0, revenue: 0 };
+    existing.qty += line.quantity;
+    existing.revenue += lineUnitPrice(line) * line.quantity;
+    byDish.set(line.item.name, existing);
+  });
+  const topDishes = Array.from(byDish.entries())
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  return (
+    <View>
+      <View style={styles.statTileRow}>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{formatPrice(revenue)}</Text>
+          <Text style={styles.statTileLabel}>Revenue</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{orderCount}</Text>
+          <Text style={styles.statTileLabel}>Orders</Text>
+        </View>
+        <View style={styles.statTile}>
+          <Text style={styles.statTileValue}>{itemsSold}</Text>
+          <Text style={styles.statTileLabel}>Items sold</Text>
+        </View>
+      </View>
+
+      <Text style={[typography.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>TOP DISHES</Text>
+      {topDishes.length === 0 && <Text style={typography.bodyMuted}>No sales yet.</Text>}
+      {topDishes.map((d) => (
+        <View key={d.name} style={styles.statRow}>
+          <Text style={[typography.body, { flex: 1 }]}>{d.name}</Text>
+          <Text style={typography.bodyMuted}>
+            {d.qty}× · {formatPrice(d.revenue)}
+          </Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
