@@ -2,13 +2,122 @@
 // see context/EmployeeAuthContext.tsx), clock in/out, and a quick way to
 // log a personal/staff order. Meant for a shared device in the kitchen,
 // not a customer-facing screen — AppHeader hides itself on this route.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useEmployeeAuth } from '../context/EmployeeAuthContext';
+import { KitchenOrder, useEmployeeAuth } from '../context/EmployeeAuthContext';
 import { fetchMenu, MenuItem } from '../data/menu';
 import QuantityStepper from '../components/QuantityStepper';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { formatPrice } from '../lib/format';
+
+const KITCHEN_REFRESH_MS = 10000;
+
+// Two quick tones synthesized on the spot — no audio file to host/license,
+// and it works the moment this loads instead of depending on a network
+// fetch for something this time-sensitive.
+function playAlertSound() {
+  if (typeof window === 'undefined') return;
+  const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const ctx = new AudioContextClass();
+    const playTone = (freq: number, start: number, duration: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + start);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + duration);
+    };
+    playTone(880, 0, 0.15);
+    playTone(1100, 0.18, 0.2);
+  } catch {
+    // Audio unavailable (autoplay policy, etc.) — the visual queue still updates either way.
+  }
+}
+
+function IncomingOrdersCard() {
+  const { kitchenActiveOrders, kitchenAdvanceOrder } = useEmployeeAuth();
+  const [orders, setOrders] = useState<KitchenOrder[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const seenIds = useRef<Set<string> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = async () => {
+    const next = await kitchenActiveOrders();
+    if (seenIds.current) {
+      const hasNewOrder = next.some((o) => !seenIds.current!.has(o.id));
+      if (hasNewOrder) playAlertSound();
+    }
+    seenIds.current = new Set(next.map((o) => o.id));
+    setOrders(next);
+  };
+
+  useEffect(() => {
+    load();
+    intervalRef.current = setInterval(load, KITCHEN_REFRESH_MS);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const advance = async (orderId: string) => {
+    setBusyId(orderId);
+    await kitchenAdvanceOrder(orderId);
+    await load();
+    setBusyId(null);
+  };
+
+  return (
+    <View style={{ marginBottom: spacing.lg }}>
+      <Text style={typography.label}>INCOMING ORDERS {orders ? `(${orders.length})` : ''}</Text>
+      {orders === null && <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.sm }} />}
+      {orders !== null && orders.length === 0 && (
+        <View style={styles.card}>
+          <Text style={typography.bodyMuted}>No active orders right now.</Text>
+        </View>
+      )}
+      {orders?.map((order) => {
+        const buttonLabel =
+          order.status === 'placed' ? 'Start preparing' : order.method === 'pickup' ? 'Mark ready / picked up' : null;
+        return (
+          <View key={order.id} style={styles.orderCard}>
+            <View style={styles.orderHeaderRow}>
+              <Text style={typography.h3}>{order.id}</Text>
+              <View style={[styles.methodBadge, order.method === 'delivery' && styles.methodBadgeDelivery]}>
+                <Text style={styles.methodBadgeText}>
+                  {order.source === 'kiosk' ? 'Kiosk' : order.method === 'delivery' ? 'Delivery' : 'Pickup'}
+                </Text>
+              </View>
+            </View>
+            {order.lines.map((line, i) => (
+              <Text key={i} style={typography.body}>
+                {line.quantity}× {line.item.name}
+                {line.selectedProtein ? ` (${line.selectedProtein})` : ''}
+              </Text>
+            ))}
+            <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>
+              {new Date(order.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ·{' '}
+              {formatPrice(order.total)}
+            </Text>
+            {buttonLabel ? (
+              <Pressable style={styles.primaryButton} onPress={() => advance(order.id)} disabled={busyId === order.id}>
+                <Text style={styles.primaryButtonText}>{busyId === order.id ? '…' : buttonLabel}</Text>
+              </Pressable>
+            ) : (
+              <Text style={[typography.bodyMuted, styles.waitingText]}>Preparing — waiting for a rider to pick it up</Text>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 function LoginScreen() {
   const { login } = useEmployeeAuth();
@@ -119,6 +228,8 @@ function StaffDashboard() {
           <Text style={styles.logoutText}>Log out</Text>
         </Pressable>
       </View>
+
+      <IncomingOrdersCard />
 
       <View style={styles.card}>
         <Text style={typography.label}>SHIFT</Text>
@@ -283,5 +394,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: spacing.md,
+  },
+  orderCard: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    borderWidth: 2,
+    borderColor: colors.forest,
+  },
+  orderHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  methodBadge: {
+    backgroundColor: colors.leaf,
+    borderRadius: radii.pill,
+    paddingVertical: 4,
+    paddingHorizontal: spacing.sm,
+  },
+  methodBadgeDelivery: {
+    backgroundColor: colors.forest,
+  },
+  methodBadgeText: {
+    color: colors.white,
+    fontWeight: '700',
+    fontSize: 11,
+  },
+  waitingText: {
+    marginTop: spacing.sm,
+    fontStyle: 'italic',
   },
 });

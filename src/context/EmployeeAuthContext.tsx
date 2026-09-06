@@ -46,6 +46,18 @@ export interface StaffOrderLine {
   quantity: number;
 }
 
+// A ticket on the kitchen's live queue — enough to actually prepare the
+// order (line items) plus what's needed to label/sort it.
+export interface KitchenOrder {
+  id: string;
+  lines: { item: { name: string }; quantity: number; selectedProtein?: string; selectedAddOnIds?: string[] }[];
+  total: number;
+  method: 'delivery' | 'pickup';
+  status: string;
+  source: string;
+  placedAt: string;
+}
+
 const STORAGE_KEY = 'pe_employee_session_v1';
 
 interface EmployeeAuthContextValue {
@@ -63,6 +75,8 @@ interface EmployeeAuthContextValue {
   riderClaimOrder: (orderId: string) => Promise<{ error: string | null }>;
   riderMarkPickedUp: (orderId: string) => Promise<{ error: string | null }>;
   riderMarkDelivered: (orderId: string) => Promise<{ error: string | null }>;
+  kitchenActiveOrders: () => Promise<KitchenOrder[]>;
+  kitchenAdvanceOrder: (orderId: string) => Promise<{ error: string | null }>;
 }
 
 const EmployeeAuthContext = createContext<EmployeeAuthContextValue | undefined>(undefined);
@@ -216,6 +230,27 @@ export function EmployeeAuthProvider({ children }: { children: React.ReactNode }
     return { error: error?.message ?? null };
   };
 
+  const kitchenActiveOrders = async (): Promise<KitchenOrder[]> => {
+    if (!token) return [];
+    const { data, error } = await supabase.rpc('kitchen_active_orders', { p_token: token });
+    if (error || !data) return [];
+    return data.map((row: any) => ({
+      id: row.id,
+      lines: row.lines ?? [],
+      total: Number(row.total),
+      method: row.fulfillment?.method ?? 'pickup',
+      status: row.status,
+      source: row.source,
+      placedAt: row.placed_at,
+    }));
+  };
+
+  const kitchenAdvanceOrder = async (orderId: string) => {
+    if (!token) return { error: 'Not signed in.' };
+    const { error } = await supabase.rpc('kitchen_advance_order', { p_token: token, p_order_id: orderId });
+    return { error: error?.message ?? null };
+  };
+
   const value: EmployeeAuthContextValue = {
     employee,
     loading,
@@ -231,6 +266,8 @@ export function EmployeeAuthProvider({ children }: { children: React.ReactNode }
     riderClaimOrder,
     riderMarkPickedUp,
     riderMarkDelivered,
+    kitchenActiveOrders,
+    kitchenAdvanceOrder,
   };
 
   return <EmployeeAuthContext.Provider value={value}>{children}</EmployeeAuthContext.Provider>;
