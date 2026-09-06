@@ -11,7 +11,10 @@ import { fetchMenu, MenuItem } from '../data/menu';
 import { lineUnitPrice, useStore } from '../context/StoreContext';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
 import { formatPrice } from '../lib/format';
+import { supabase } from '../lib/supabase';
+import { chargeOnReader, connectReader } from '../lib/cardTerminal';
 import KioskItemModal from '../components/KioskItemModal';
+import QrCode from '../components/QrCode';
 
 // Makes "Share -> Add to Home Screen" (while actually on /kiosk in Safari)
 // launch as a true full-screen app with no address bar, tab bar, or
@@ -94,7 +97,24 @@ export default function KioskScreen() {
   const [placing, setPlacing] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [confirmedOrderId, setConfirmedOrderId] = useState<string | null>(null);
+  const [readerConnected, setReaderConnected] = useState(false);
+  const [readerChecking, setReaderChecking] = useState(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Best-effort, silent attempt at startup to find a paired Stripe Terminal
+  // card reader (see lib/cardTerminal.ts). If none is set up yet — the
+  // default today — this just quietly stays false and "Pay by card" keeps
+  // using the existing browser checkout redirect below.
+  useEffect(() => {
+    connectReader().then((r) => setReaderConnected(r.connected));
+  }, []);
+
+  const recheckReader = async () => {
+    setReaderChecking(true);
+    const r = await connectReader();
+    setReaderConnected(r.connected);
+    setReaderChecking(false);
+  };
 
   // Returning here from Stripe after a card payment.
   useEffect(() => {
@@ -164,6 +184,23 @@ export default function KioskScreen() {
       setOrderError("Sorry, that didn't go through — please try again or ask a staff member.");
       return;
     }
+
+    // A physical card reader (Stripe Terminal) takes priority when one's
+    // connected — the customer taps/inserts their card on the reader
+    // itself, which also shows the amount there. Falls through to the
+    // browser checkout redirect below when no reader is set up.
+    if (readerConnected) {
+      const result = await chargeOnReader(orderId);
+      setPlacing(false);
+      if (result.success) {
+        setConfirmedOrderId(orderId);
+        setScreen('confirmation');
+      } else {
+        setOrderError(result.error || "Card payment didn't go through on the reader — please try again or pay at counter.");
+      }
+      return;
+    }
+
     try {
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
@@ -221,9 +258,12 @@ export default function KioskScreen() {
           subtotal={cartSubtotal}
           placing={placing}
           error={orderError}
+          readerConnected={readerConnected}
+          readerChecking={readerChecking}
           onBack={() => setScreen('cart')}
           onPayCounter={handlePayCounter}
           onPayCard={handlePayCard}
+          onRecheckReader={recheckReader}
         />
       )}
 
@@ -426,16 +466,22 @@ function PaymentScreen({
   subtotal,
   placing,
   error,
+  readerConnected,
+  readerChecking,
   onBack,
   onPayCounter,
   onPayCard,
+  onRecheckReader,
 }: {
   subtotal: number;
   placing: boolean;
   error: string | null;
+  readerConnected: boolean;
+  readerChecking: boolean;
   onBack: () => void;
   onPayCounter: () => void;
   onPayCard: () => void;
+  onRecheckReader: () => void;
 }) {
   return (
     <View style={styles.contentScreen}>
@@ -446,7 +492,9 @@ function PaymentScreen({
         <Pressable style={styles.paymentCard} onPress={onPayCard} disabled={placing}>
           <Text style={styles.paymentEmoji}>💳</Text>
           <Text style={styles.paymentLabel}>Pay by card</Text>
-          <Text style={typography.bodyMuted}>Card or Apple Pay, right here</Text>
+          <Text style={typography.bodyMuted}>
+            {readerConnected ? 'Tap or insert card on the reader' : 'Card or Apple Pay, right here'}
+          </Text>
         </Pressable>
         <Pressable style={styles.paymentCard} onPress={onPayCounter} disabled={placing}>
           <Text style={styles.paymentEmoji}>🧾</Text>
@@ -454,6 +502,16 @@ function PaymentScreen({
           <Text style={typography.bodyMuted}>We'll take your payment there</Text>
         </Pressable>
       </View>
+
+      <Pressable style={styles.readerStatusRow} onPress={onRecheckReader} disabled={readerChecking}>
+        <Text style={styles.readerStatusText}>
+          {readerChecking
+            ? 'Checking for card reader…'
+            : readerConnected
+            ? '🟢 Card reader connected'
+            : '⚪ No card reader connected — tap to search'}
+        </Text>
+      </Pressable>
 
       {placing && <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.lg }} />}
       {error && <Text style={styles.errorText}>{error}</Text>}
@@ -466,16 +524,61 @@ function PaymentScreen({
 }
 
 function ConfirmationScreen({ orderId, onDone }: { orderId: string; onDone: () => void }) {
+  const [receipt, setReceipt] = useState<{ lines: any[]; total: number } | null>(null);
+
+  // Guest-safe lookup (see supabase/kiosk_receipt_schema.sql) — kiosk
+  // customers never sign in, so there's no loaded order list to read this
+  // back from the way the regular website's /receipt page does.
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .rpc('kiosk_order_receipt', { p_order_id: orderId })
+      .then(({ data }: any) => {
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!cancelled && row) setReceipt({ lines: row.lines ?? [], total: Number(row.total) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId]);
+
+  const receiptUrl = typeof window !== 'undefined' ? `${window.location.origin}/kiosk-receipt/${orderId}` : '';
+
   return (
-    <View style={styles.idleScreen}>
+    <ScrollView contentContainerStyle={styles.confirmationScreen}>
       <Text style={styles.confirmationEmoji}>✅</Text>
       <Text style={styles.idleTitle}>Order placed!</Text>
       <Text style={styles.orderNumber}>{orderId}</Text>
       <Text style={styles.idleSubtitle}>Please wait to be called — thank you!</Text>
+
+      {receipt && (
+        <View style={styles.receiptCard}>
+          {receipt.lines.map((line: any, i: number) => (
+            <View key={i} style={styles.receiptLine}>
+              <Text style={typography.body} numberOfLines={1}>
+                {line.quantity}× {line.item?.name}
+              </Text>
+              <Text style={typography.body}>{formatPrice(lineUnitPrice(line) * line.quantity)}</Text>
+            </View>
+          ))}
+          <View style={styles.receiptTotalLine}>
+            <Text style={typography.h3}>Total</Text>
+            <Text style={typography.h3}>{formatPrice(receipt.total)}</Text>
+          </View>
+        </View>
+      )}
+
+      {receiptUrl !== '' && (
+        <View style={styles.qrWrap}>
+          <QrCode value={receiptUrl} size={120} />
+          <Text style={styles.qrCaption}>Scan for a receipt on your phone</Text>
+        </View>
+      )}
+
       <Pressable style={[styles.primaryButton, { marginTop: spacing.xl, width: 280 }]} onPress={onDone}>
         <Text style={styles.primaryButtonText}>Done</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -489,6 +592,53 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: spacing.xl,
+  },
+  confirmationScreen: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  receiptCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: colors.card,
+    borderRadius: radii.md,
+    padding: spacing.lg,
+    marginTop: spacing.xl,
+  },
+  receiptLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  receiptTotalLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  qrWrap: {
+    alignItems: 'center',
+    marginTop: spacing.lg,
+  },
+  qrCaption: {
+    marginTop: spacing.sm,
+    fontSize: 13,
+    color: colors.inkMuted,
+  },
+  readerStatusRow: {
+    alignItems: 'center',
+    marginTop: spacing.lg,
+    paddingVertical: spacing.xs,
+  },
+  readerStatusText: {
+    fontSize: 13,
+    color: colors.inkMuted,
+    fontWeight: '600',
   },
   confirmationEmoji: {
     fontSize: 96,

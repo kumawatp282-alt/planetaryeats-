@@ -11,6 +11,7 @@
 // menu_items / vouchers / app_settings before Stripe ever sees an amount.
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
+const { computeOrderPricing } = require('./_lib/orderPricing');
 
 const DELIVERY_FEE = 2.99; // must match DELIVERY_FEE in context/StoreContext.tsx
 
@@ -77,38 +78,15 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const itemIds = [...new Set(order.lines.map((line) => line.item && line.item.id).filter(Boolean))];
-    const { data: menuItems, error: menuError } = await supabase
-      .from('menu_items')
-      .select('id, name, price, add_ons')
-      .in('id', itemIds);
-
-    if (menuError || !menuItems) {
-      res.status(500).json({ error: 'Could not verify menu prices' });
-      return;
-    }
-    const menuById = new Map(menuItems.map((m) => [m.id, m]));
-
-    let subtotal = 0;
-    const line_items = order.lines.map((line) => {
-      const menuItem = menuById.get(line.item && line.item.id);
-      if (!menuItem) {
-        throw new Error(`Order references a menu item that no longer exists: ${line.item && line.item.id}`);
-      }
-      const addOnsTotal = (menuItem.add_ons || [])
-        .filter((addOn) => (line.selectedAddOnIds || []).includes(addOn.id))
-        .reduce((sum, addOn) => sum + Number(addOn.price), 0);
-      const unitPrice = Number(menuItem.price) + addOnsTotal;
-      subtotal += unitPrice * line.quantity;
-      return {
-        price_data: {
-          currency: 'eur',
-          product_data: { name: menuItem.name },
-          unit_amount: Math.round(unitPrice * 100),
-        },
-        quantity: line.quantity,
-      };
-    });
+    const { subtotal, lines } = await computeOrderPricing(supabase, order);
+    const line_items = lines.map((line) => ({
+      price_data: {
+        currency: 'eur',
+        product_data: { name: line.name },
+        unit_amount: Math.round(line.unitPrice * 100),
+      },
+      quantity: line.quantity,
+    }));
 
     const deliveryFee = order.fulfillment && order.fulfillment.method === 'delivery' ? DELIVERY_FEE : 0;
     if (deliveryFee > 0) {

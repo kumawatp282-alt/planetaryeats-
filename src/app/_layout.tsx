@@ -51,6 +51,7 @@ export default function RootLayout() {
                 <Stack.Screen name="order-confirmation" options={{ gestureEnabled: false }} />
                 <Stack.Screen name="admin" />
                 <Stack.Screen name="receipt/[orderId]" />
+                <Stack.Screen name="kiosk-receipt/[orderId]" />
                 <Stack.Screen name="impressum" />
                 <Stack.Screen name="datenschutz" />
                 <Stack.Screen name="nutrition" />
