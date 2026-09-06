@@ -7,7 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import Head from 'expo-router/head';
-import { Category, categories, fetchMenu, MenuItem } from '../data/menu';
+import { fetchMenu, MenuItem } from '../data/menu';
 import { lineUnitPrice, useStore } from '../context/StoreContext';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
 import { formatPrice } from '../lib/format';
@@ -37,13 +37,59 @@ type KioskScreen = 'idle' | 'menu' | 'cart' | 'payment' | 'confirmation';
 const IDLE_TIMEOUT_MS = 120000; // reset to idle after 2 minutes of no interaction
 const CONFIRMATION_AUTO_RESET_MS = 15000;
 
+// This kiosk lives at the physical Zam Zam Döner counter — only their own
+// dishes belong on it, not Planetary Eats' delivery-only bowls.
+const ZAMZAM_GROUP_ID = 'zam-zam-doner';
+
+// The shared `menu_items.category` column only has three values
+// (Bowls/Drinks/Desserts) because it's a platform-wide constraint used by
+// Planetary Eats' own dashboard math too — so every one of Zam Zam's 70+
+// dishes (döner, burgers, pasta, salads...) is stored under 'Bowls' and
+// would otherwise show up as one undifferentiated wall of food. This is a
+// kiosk-only, client-side re-bucketing (keyed off item id, since the real
+// category can't change) purely for a McDonald's-style vertical category
+// list — it has no effect on the admin dashboard or the regular site.
+interface KioskCategory {
+  key: string;
+  label: string;
+  emoji: string;
+  color: string;
+}
+
+const KIOSK_CATEGORIES: KioskCategory[] = [
+  { key: 'doner', label: 'Döner & Dürüm', emoji: '🥙', color: '#E8531F' },
+  { key: 'chicken', label: 'Chicken', emoji: '🍗', color: '#E0951A' },
+  { key: 'burgers', label: 'Burgers', emoji: '🍔', color: '#8B5A2B' },
+  { key: 'wings', label: 'Wings & Nuggets', emoji: '🍤', color: '#D6401F' },
+  { key: 'falafel', label: 'Falafel & Veggie', emoji: '🧆', color: '#6C9A34' },
+  { key: 'pasta', label: 'Pasta', emoji: '🍝', color: '#D9A62B' },
+  { key: 'salads', label: 'Salads', emoji: '🥗', color: '#3F9142' },
+  { key: 'sides', label: 'Sides & Extras', emoji: '🍟', color: '#D98E1E' },
+  { key: 'drinks', label: 'Drinks', emoji: '🥤', color: '#1F6FB2' },
+  { key: 'desserts', label: 'Desserts', emoji: '🍰', color: '#C22568' },
+];
+
+function kioskCategoryKey(item: MenuItem): string {
+  const id = item.id;
+  if (id.includes('insalata')) return 'salads';
+  if (id.includes('pasta')) return 'pasta';
+  if (id.includes('burger')) return 'burgers';
+  if (id.includes('wings') || id.includes('nuggets')) return 'wings';
+  if (id.includes('falafel')) return 'falafel';
+  if (id.includes('drehspiess')) return 'doner';
+  if (id.includes('schnitzel') || id.includes('haehnchen-menu') || id.includes('haehnchen') || id.includes('hahnchen')) return 'chicken';
+  if (item.category === 'Drinks') return 'drinks';
+  if (item.category === 'Desserts') return 'desserts';
+  return 'sides';
+}
+
 export default function KioskScreen() {
   const params = useLocalSearchParams<{ confirmed?: string; orderId?: string }>();
   const { cart, cartCount, cartSubtotal, updateQuantity, removeFromCart, clearCart, placeKioskOrder } = useStore();
 
   const [screen, setScreen] = useState<KioskScreen>('idle');
   const [menuItems, setMenuItems] = useState<MenuItem[] | null>(null);
-  const [activeCategory, setActiveCategory] = useState<Category>('Bowls');
+  const [activeCategory, setActiveCategory] = useState<string>(KIOSK_CATEGORIES[0].key);
   const [customizeItem, setCustomizeItem] = useState<MenuItem | null>(null);
   const [placing, setPlacing] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -231,8 +277,8 @@ function MenuScreen({
   onViewCart,
 }: {
   items: MenuItem[] | null;
-  activeCategory: Category;
-  onCategoryChange: (c: Category) => void;
+  activeCategory: string;
+  onCategoryChange: (c: string) => void;
   onSelectItem: (item: MenuItem) => void;
   cartCount: number;
   cartSubtotal: number;
@@ -246,39 +292,58 @@ function MenuScreen({
     );
   }
 
-  const visible = items.filter((i) => i.category === activeCategory);
+  const zamzamItems = items.filter((i) => i.groupId === ZAMZAM_GROUP_ID);
+  const grouped: Record<string, MenuItem[]> = {};
+  zamzamItems.forEach((item) => {
+    const key = kioskCategoryKey(item);
+    (grouped[key] ??= []).push(item);
+  });
+  const availableCategories = KIOSK_CATEGORIES.filter((c) => grouped[c.key]?.length);
+  const effectiveKey = grouped[activeCategory]?.length ? activeCategory : availableCategories[0]?.key;
+  const activeMeta = availableCategories.find((c) => c.key === effectiveKey);
+  const visible = effectiveKey ? grouped[effectiveKey] ?? [] : [];
 
   return (
-    <View style={styles.contentScreen}>
-      <View style={styles.categoryRow}>
-        {categories.map((c) => (
-          <Pressable
-            key={c}
-            style={[styles.categoryTab, activeCategory === c && styles.categoryTabActive]}
-            onPress={() => onCategoryChange(c)}
-          >
-            <Text style={[styles.categoryTabText, activeCategory === c && styles.categoryTabTextActive]}>{c}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      <ScrollView contentContainerStyle={styles.grid}>
-        {visible.map((item) => (
-          <Pressable key={item.id} style={styles.gridCard} onPress={() => onSelectItem(item)}>
-            {item.dishImage ? (
-              <Image source={item.dishImage} style={styles.gridImage} resizeMode="cover" />
-            ) : (
-              <View style={[styles.gridImage, styles.gridImageEmoji]}>
-                <Text style={{ fontSize: 40 }}>{item.emoji}</Text>
-              </View>
-            )}
-            <Text style={styles.gridName} numberOfLines={2}>
-              {item.name}
-            </Text>
-            <Text style={styles.gridPrice}>{formatPrice(item.price)}</Text>
-          </Pressable>
-        ))}
+    <View style={styles.menuLayout}>
+      <ScrollView style={styles.sidebar} contentContainerStyle={styles.sidebarContent}>
+        {availableCategories.map((c) => {
+          const active = c.key === effectiveKey;
+          return (
+            <Pressable
+              key={c.key}
+              style={[styles.sidebarItem, active && { backgroundColor: c.color + '1F', borderLeftColor: c.color }]}
+              onPress={() => onCategoryChange(c.key)}
+            >
+              <Text style={styles.sidebarEmoji}>{c.emoji}</Text>
+              <Text style={[styles.sidebarLabel, active && { color: colors.ink, fontWeight: '800' }]}>{c.label}</Text>
+            </Pressable>
+          );
+        })}
       </ScrollView>
+
+      <View style={styles.mainPanel}>
+        {activeMeta && <Text style={styles.categoryHeading}>{activeMeta.label}</Text>}
+        <ScrollView contentContainerStyle={styles.grid}>
+          {visible.map((item) => (
+            <Pressable key={item.id} style={styles.gridCard} onPress={() => onSelectItem(item)}>
+              <View style={[styles.gridImageWrap, { backgroundColor: (activeMeta?.color ?? colors.forest) + '22' }]}>
+                {item.dishImage ? (
+                  <Image source={item.dishImage} style={styles.gridImagePhoto} resizeMode="cover" />
+                ) : (
+                  <Text style={styles.gridEmoji}>{item.emoji}</Text>
+                )}
+                <View style={styles.addBadge}>
+                  <Text style={styles.addBadgeText}>+</Text>
+                </View>
+              </View>
+              <Text style={styles.gridName} numberOfLines={2}>
+                {item.name}
+              </Text>
+              <Text style={styles.gridPrice}>{formatPrice(item.price)}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
 
       {cartCount > 0 && (
         <Pressable style={styles.cartBar} onPress={onViewCart}>
@@ -482,55 +547,93 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: spacing.lg,
   },
-  categoryRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    padding: spacing.lg,
-  },
-  categoryTab: {
+  menuLayout: {
     flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: radii.md,
-    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  sidebar: {
+    width: 240,
     backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
   },
-  categoryTabActive: {
-    backgroundColor: colors.forest,
-    borderColor: colors.forest,
+  sidebarContent: {
+    paddingVertical: spacing.md,
   },
-  categoryTabText: {
-    fontSize: 18,
-    fontWeight: '700',
+  sidebarItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    borderLeftWidth: 4,
+    borderLeftColor: 'transparent',
+  },
+  sidebarEmoji: {
+    fontSize: 26,
+  },
+  sidebarLabel: {
+    fontSize: 16,
+    fontWeight: '600',
     color: colors.inkMuted,
+    flexShrink: 1,
   },
-  categoryTabTextActive: {
-    color: colors.white,
+  mainPanel: {
+    flex: 1,
+  },
+  categoryHeading: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: colors.ink,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.md,
+    gap: spacing.lg,
     padding: spacing.lg,
     paddingBottom: 120,
   },
   gridCard: {
-    width: 220,
-    backgroundColor: colors.card,
-    borderRadius: radii.md,
-    padding: spacing.md,
+    width: 230,
+    backgroundColor: colors.cream,
+    borderRadius: radii.lg,
+    padding: spacing.sm,
     ...shadow.card,
   },
-  gridImage: {
+  gridImageWrap: {
     width: '100%',
-    height: 120,
-    borderRadius: radii.sm,
-  },
-  gridImageEmoji: {
+    height: 140,
+    borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.cream,
+  },
+  gridImagePhoto: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radii.md,
+  },
+  gridEmoji: {
+    fontSize: 56,
+  },
+  addBadge: {
+    position: 'absolute',
+    bottom: spacing.xs,
+    right: spacing.xs,
+    width: 36,
+    height: 36,
+    borderRadius: radii.pill,
+    backgroundColor: colors.forest,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.card,
+  },
+  addBadgeText: {
+    color: colors.white,
+    fontSize: 22,
+    fontWeight: '700',
+    marginTop: -2,
   },
   gridName: {
     fontSize: 16,
