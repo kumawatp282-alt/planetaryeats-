@@ -311,11 +311,15 @@ function MenuScreen({
           return (
             <Pressable
               key={c.key}
-              style={[styles.sidebarItem, active && { backgroundColor: c.color + '1F', borderLeftColor: c.color }]}
+              style={[styles.sidebarItem, active && { backgroundColor: c.color + '17' }]}
               onPress={() => onCategoryChange(c.key)}
             >
-              <Text style={styles.sidebarEmoji}>{c.emoji}</Text>
-              <Text style={[styles.sidebarLabel, active && { color: colors.ink, fontWeight: '800' }]}>{c.label}</Text>
+              <View style={[styles.sidebarIconWrap, { backgroundColor: c.color + (active ? '33' : '18') }]}>
+                <Text style={styles.sidebarEmoji}>{c.emoji}</Text>
+              </View>
+              <Text style={[styles.sidebarLabel, active && { color: colors.ink, fontWeight: '700' }]} numberOfLines={2}>
+                {c.label}
+              </Text>
             </Pressable>
           );
         })}
@@ -552,31 +556,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   sidebar: {
-    width: 240,
-    backgroundColor: colors.card,
+    width: 168,
+    backgroundColor: colors.cream,
     borderRightWidth: 1,
     borderRightColor: colors.border,
   },
   sidebarContent: {
-    paddingVertical: spacing.md,
+    padding: spacing.sm,
+    gap: spacing.xs,
   },
   sidebarItem: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    borderLeftWidth: 4,
-    borderLeftColor: 'transparent',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radii.md,
+  },
+  sidebarIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sidebarEmoji: {
-    fontSize: 26,
+    fontSize: 20,
   },
   sidebarLabel: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '600',
     color: colors.inkMuted,
-    flexShrink: 1,
+    textAlign: 'center',
   },
   mainPanel: {
     flex: 1,

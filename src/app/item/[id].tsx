@@ -138,8 +138,13 @@ export default function ItemDetailScreen() {
     );
   };
 
+  // The rice-scoop "build your bowl" base only makes sense for Planetary
+  // Eats' own bowls — a grouped partner-restaurant item (Chili Döner
+  // Freising, Zam Zam Döner, ...) that has proteinOptions for some other
+  // reason (e.g. a rice-or-fries choice) is a fixed dish, not a bowl.
+  const hasBase = Boolean(item.proteinOptions && item.proteinOptions.length > 0 && !item.groupId);
+
   const handleAdd = () => {
-    const hasBase = Boolean(item.proteinOptions && item.proteinOptions.length > 0);
     addToCart(item, quantity, selectedProtein, selectedAddOnIds, hasBase ? riceScoops : undefined);
     router.back();
   };
@@ -168,13 +173,11 @@ export default function ItemDetailScreen() {
           </View>
         )}
 
-        {item.proteinOptions && item.proteinOptions.length > 0 && (
-          <BowlBaseSection scoops={riceScoops} onChange={setRiceScoops} />
-        )}
+        {hasBase && <BowlBaseSection scoops={riceScoops} onChange={setRiceScoops} />}
 
         {item.proteinOptions && item.proteinOptions.length > 0 && (
           <View style={styles.section}>
-            <Text style={typography.label}>CHOOSE YOUR PROTEIN</Text>
+            <Text style={typography.label}>{hasBase ? 'CHOOSE YOUR PROTEIN' : 'CHOOSE AN OPTION'}</Text>
             <View style={styles.optionRow}>
               {item.proteinOptions.map((protein) => (
                 <AnimatedProteinPill

@@ -3,7 +3,7 @@
 // modal instead of a full navigated page (a kiosk customer shouldn't
 // have to wait through a page transition for every tap).
 import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MenuItem } from '../data/menu';
 import { useStore } from '../context/StoreContext';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
@@ -50,14 +50,18 @@ export default function KioskItemModal({ visible, item, onClose }: Props) {
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <ScrollView contentContainerStyle={styles.content}>
-            <Text style={styles.emoji}>{item.emoji}</Text>
+            {item.dishImage ? (
+              <Image source={item.dishImage} style={styles.photo} resizeMode="cover" />
+            ) : (
+              <Text style={styles.emoji}>{item.emoji}</Text>
+            )}
             <Text style={typography.h2}>{item.name}</Text>
             <Text style={[typography.bodyMuted, { textAlign: 'center' }]}>{item.description}</Text>
             <Text style={styles.price}>{formatPrice(unitPrice)}</Text>
 
             {item.proteinOptions && item.proteinOptions.length > 0 && (
               <View style={styles.section}>
-                <Text style={typography.label}>CHOOSE YOUR PROTEIN</Text>
+                <Text style={typography.label}>{item.groupId ? 'CHOOSE AN OPTION' : 'CHOOSE YOUR PROTEIN'}</Text>
                 <View style={styles.chipRow}>
                   {item.proteinOptions.map((p) => (
                     <Pressable
@@ -138,6 +142,12 @@ const styles = StyleSheet.create({
   },
   emoji: {
     fontSize: 56,
+    marginBottom: spacing.sm,
+  },
+  photo: {
+    width: '100%',
+    height: 180,
+    borderRadius: radii.md,
     marginBottom: spacing.sm,
   },
   price: {
