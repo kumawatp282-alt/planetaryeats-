@@ -199,19 +199,18 @@ export default function KioskScreen() {
 function IdleScreen({ onStart }: { onStart: () => void }) {
   return (
     <Pressable style={styles.idleScreen} onPress={onStart}>
-      <Image
-        source={require('../assets/planetary-eats-logo.png')}
-        style={styles.idleLogo}
-        resizeMode="contain"
-      />
-      <View style={styles.idleBrandDivider}>
-        <View style={styles.idleBrandLine} />
-        <Text style={styles.idleBrandAnd}>&</Text>
-        <View style={styles.idleBrandLine} />
+      <View style={styles.poweredByCorner}>
+        <Image
+          source={require('../assets/planetary-eats-logo.png')}
+          style={styles.poweredByLogo}
+          resizeMode="contain"
+        />
+        <Text style={styles.poweredByText}>Order on planetaryeats.com</Text>
       </View>
+
       <View style={styles.zamzamBadge}>
         <Image
-          source={require('../assets/zamzam-doner-logo.png')}
+          source={require('../assets/zamzam-logo.png')}
           style={styles.zamzamLogo}
           resizeMode="contain"
         />
@@ -422,42 +421,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.xl,
   },
-  idleLogo: {
-    width: 320,
-    height: 320,
-    marginBottom: spacing.sm,
-  },
   confirmationEmoji: {
     fontSize: 96,
     marginBottom: spacing.lg,
   },
-  idleBrandDivider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: 200,
-    marginBottom: spacing.md,
+  poweredByCorner: {
+    position: 'absolute',
+    top: spacing.xl,
+    left: spacing.xl,
+    alignItems: 'flex-start',
   },
-  idleBrandLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
+  poweredByLogo: {
+    width: 120,
+    height: 120,
   },
-  idleBrandAnd: {
-    marginHorizontal: spacing.sm,
-    fontSize: 16,
-    fontWeight: '700',
+  poweredByText: {
+    marginTop: -spacing.sm,
+    fontSize: 12,
+    fontWeight: '600',
     color: colors.inkMuted,
   },
   zamzamBadge: {
     backgroundColor: '#1A1A1A',
     borderRadius: radii.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.xl,
     marginBottom: spacing.xl,
   },
   zamzamLogo: {
-    width: 260,
-    height: 127,
+    width: 520,
+    height: 189,
   },
   idleTitle: {
     fontSize: 40,
