@@ -199,7 +199,7 @@ export default function KioskScreen() {
 function IdleScreen({ onStart }: { onStart: () => void }) {
   return (
     <Pressable style={styles.idleScreen} onPress={onStart}>
-      <View style={styles.poweredByCorner}>
+      <View style={styles.poweredByTop}>
         <Image
           source={require('../assets/planetary-eats-logo.png')}
           style={styles.poweredByLogo}
@@ -425,19 +425,17 @@ const styles = StyleSheet.create({
     fontSize: 96,
     marginBottom: spacing.lg,
   },
-  poweredByCorner: {
-    position: 'absolute',
-    top: spacing.xl,
-    left: spacing.xl,
-    alignItems: 'flex-start',
+  poweredByTop: {
+    alignItems: 'center',
+    marginBottom: spacing.xl,
   },
   poweredByLogo: {
-    width: 120,
-    height: 120,
+    width: 90,
+    height: 90,
   },
   poweredByText: {
     marginTop: -spacing.sm,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
     color: colors.inkMuted,
   },
