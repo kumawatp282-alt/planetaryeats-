@@ -199,7 +199,20 @@ export default function KioskScreen() {
 function IdleScreen({ onStart }: { onStart: () => void }) {
   return (
     <Pressable style={styles.idleScreen} onPress={onStart}>
-      <Text style={styles.idleEmoji}>🍽️</Text>
+      <Image
+        source={require('../assets/planetary-eats-logo.png')}
+        style={styles.idleLogo}
+        resizeMode="contain"
+      />
+      <View style={styles.idleBrandDivider}>
+        <View style={styles.idleBrandLine} />
+        <Text style={styles.idleBrandAnd}>&</Text>
+        <View style={styles.idleBrandLine} />
+      </View>
+      <View style={styles.zamzamBadge}>
+        <Text style={styles.zamzamEmoji}>🥙</Text>
+        <Text style={styles.zamzamText}>ZAM ZAM DÖNER</Text>
+      </View>
       <Text style={styles.idleTitle}>Welcome!</Text>
       <Text style={styles.idleSubtitle}>Tap anywhere to start your order</Text>
     </Pressable>
@@ -384,7 +397,7 @@ function PaymentScreen({
 function ConfirmationScreen({ orderId, onDone }: { orderId: string; onDone: () => void }) {
   return (
     <View style={styles.idleScreen}>
-      <Text style={styles.idleEmoji}>✅</Text>
+      <Text style={styles.confirmationEmoji}>✅</Text>
       <Text style={styles.idleTitle}>Order placed!</Text>
       <Text style={styles.orderNumber}>{orderId}</Text>
       <Text style={styles.idleSubtitle}>Please wait to be called — thank you!</Text>
@@ -406,9 +419,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.xl,
   },
-  idleEmoji: {
+  idleLogo: {
+    width: 320,
+    height: 320,
+    marginBottom: spacing.sm,
+  },
+  confirmationEmoji: {
     fontSize: 96,
     marginBottom: spacing.lg,
+  },
+  idleBrandDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 200,
+    marginBottom: spacing.md,
+  },
+  idleBrandLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  idleBrandAnd: {
+    marginHorizontal: spacing.sm,
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.inkMuted,
+  },
+  zamzamBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+    borderRadius: radii.pill,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  zamzamEmoji: {
+    fontSize: 22,
+    marginRight: spacing.sm,
+  },
+  zamzamText: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: '#F0923B',
   },
   idleTitle: {
     fontSize: 40,
