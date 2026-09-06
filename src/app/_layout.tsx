@@ -56,6 +56,7 @@ export default function RootLayout() {
                 <Stack.Screen name="nutrition" />
                 <Stack.Screen name="staff" />
                 <Stack.Screen name="rider" />
+                <Stack.Screen name="kiosk" options={{ gestureEnabled: false }} />
                 <Stack.Screen name="rewards" />
                 <Stack.Screen name="help" />
                 <Stack.Screen name="courier" />

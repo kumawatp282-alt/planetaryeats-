@@ -58,7 +58,7 @@ module.exports = async (req, res) => {
 
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   const supabase = createClient(process.env.EXPO_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-  const { orderId, origin } = req.body || {};
+  const { orderId, origin, successPath, cancelPath } = req.body || {};
 
   if (!orderId || !origin) {
     res.status(400).json({ error: 'Missing order details' });
@@ -138,8 +138,10 @@ module.exports = async (req, res) => {
               },
             ]
           : undefined,
-      success_url: `${origin}/order-confirmation?orderId=${encodeURIComponent(orderId)}`,
-      cancel_url: `${origin}/checkout`,
+      success_url: `${origin}${successPath || '/order-confirmation'}${
+        (successPath || '').includes('?') ? '&' : '?'
+      }orderId=${encodeURIComponent(orderId)}`,
+      cancel_url: `${origin}${cancelPath || '/checkout'}`,
       metadata: { orderId },
     });
 

@@ -486,6 +486,11 @@ interface StoreContextValue extends StoreState {
     voucherId?: string
   ) => Promise<Order | null>;
   logManualOrder: (input: ManualOrderInput) => Promise<{ error: string | null }>;
+  // Self-serve kiosk (/kiosk) — no signed-in customer, so this goes through
+  // a security-definer RPC that independently recomputes the real total
+  // from menu_items rather than trusting the cart's client-side prices
+  // (see supabase/kiosk_schema.sql). Returns the new order id, or null.
+  placeKioskOrder: (paymentMethod: 'kiosk-card' | 'kiosk-counter') => Promise<string | null>;
   advanceOrderStatus: (orderId: string) => void;
   cartSubtotal: number;
   cartCount: number;
@@ -945,6 +950,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           source: input.source,
         });
         return { error: error?.message ?? null };
+      },
+      placeKioskOrder: async (paymentMethod) => {
+        if (state.cart.length === 0) return null;
+        const { data, error } = await supabase.rpc('place_kiosk_order', {
+          p_lines: state.cart,
+          p_payment_method: paymentMethod,
+        });
+        if (error || !data) return null;
+        dispatch({ type: 'CLEAR_CART' });
+        return data as string;
       },
       advanceOrderStatus: (orderId) => {
         const order = state.orders.find((o) => o.id === orderId);
