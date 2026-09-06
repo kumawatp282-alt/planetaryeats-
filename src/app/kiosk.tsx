@@ -6,11 +6,31 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
+import Head from 'expo-router/head';
 import { Category, categories, fetchMenu, MenuItem } from '../data/menu';
 import { lineUnitPrice, useStore } from '../context/StoreContext';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
 import { formatPrice } from '../lib/format';
 import KioskItemModal from '../components/KioskItemModal';
+
+// Makes "Share -> Add to Home Screen" (while actually on /kiosk in Safari)
+// launch as a true full-screen app with no address bar, tab bar, or
+// "planetaryeats.com" shown anywhere — Safari only does this for a page
+// that declares itself installable this way, and only for the page it was
+// added from. Scoped to this route via expo-router/head, so it has zero
+// effect on the regular site.
+function KioskHeadTags() {
+  return (
+    <Head>
+      <title>Order Kiosk</title>
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+      <meta name="apple-mobile-web-app-title" content="Order Kiosk" />
+      <link rel="apple-touch-icon" href="/planetary-eats-logo.png" />
+    </Head>
+  );
+}
 
 type KioskScreen = 'idle' | 'menu' | 'cart' | 'payment' | 'confirmation';
 
@@ -124,6 +144,7 @@ export default function KioskScreen() {
 
   return (
     <View style={styles.screen} onTouchStart={resetIdleTimer}>
+      <KioskHeadTags />
       {screen === 'idle' && <IdleScreen onStart={startOrder} />}
 
       {screen === 'menu' && (
