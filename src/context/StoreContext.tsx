@@ -97,6 +97,8 @@ export type DeliveryCheckStatus = 'idle' | 'checking' | 'ok' | 'too-far' | 'not-
 export interface KioskHomeSettings {
   featuredCategoryKeys: string[];
   popularItemIds: string[];
+  categoryImages: Record<string, string>; // kiosk category key -> uploaded photo URL, replaces the emoji when set
+  idlePromoImageUrl: string | null; // full-screen offer image shown on the idle screen instead of the branded layout
 }
 
 export interface AppSettings {
@@ -335,6 +337,8 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
 const DEFAULT_KIOSK_HOME_SETTINGS: KioskHomeSettings = {
   featuredCategoryKeys: ['doner', 'chicken', 'burgers', 'wings'],
   popularItemIds: [],
+  categoryImages: {},
+  idlePromoImageUrl: null,
 };
 
 interface StoreState {
@@ -510,7 +514,11 @@ interface StoreContextValue extends StoreState {
   // a security-definer RPC that independently recomputes the real total
   // from menu_items rather than trusting the cart's client-side prices
   // (see supabase/kiosk_schema.sql). Returns the new order id, or null.
-  placeKioskOrder: (paymentMethod: 'kiosk-card' | 'kiosk-counter') => Promise<string | null>;
+  placeKioskOrder: (
+    paymentMethod: 'kiosk-card' | 'kiosk-counter',
+    voucherId?: string,
+    promoCode?: string
+  ) => Promise<string | null>;
   advanceOrderStatus: (orderId: string) => void;
   cartSubtotal: number;
   cartCount: number;
@@ -881,6 +889,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           settings: {
             featuredCategoryKeys: data.featured_category_keys ?? DEFAULT_KIOSK_HOME_SETTINGS.featuredCategoryKeys,
             popularItemIds: data.popular_item_ids ?? [],
+            categoryImages: data.category_images ?? {},
+            idlePromoImageUrl: data.idle_promo_image_url ?? null,
           },
         });
       });
@@ -992,11 +1002,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         });
         return { error: error?.message ?? null };
       },
-      placeKioskOrder: async (paymentMethod) => {
+      placeKioskOrder: async (paymentMethod, voucherId, promoCode) => {
         if (state.cart.length === 0) return null;
         const { data, error } = await supabase.rpc('place_kiosk_order', {
           p_lines: state.cart,
           p_payment_method: paymentMethod,
+          p_voucher_id: voucherId ?? null,
+          p_promo_code: promoCode ?? null,
         });
         if (error || !data) return null;
         dispatch({ type: 'CLEAR_CART' });
@@ -1058,6 +1070,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const payload: Record<string, unknown> = {};
         if (changes.featuredCategoryKeys !== undefined) payload.featured_category_keys = changes.featuredCategoryKeys;
         if (changes.popularItemIds !== undefined) payload.popular_item_ids = changes.popularItemIds;
+        if (changes.categoryImages !== undefined) payload.category_images = changes.categoryImages;
+        if (changes.idlePromoImageUrl !== undefined) payload.idle_promo_image_url = changes.idlePromoImageUrl;
         const { error } = await supabase.from('kiosk_home_settings').update(payload).eq('id', 1);
         if (error) return { error: error.message };
         dispatch({ type: 'SET_KIOSK_HOME_SETTINGS', settings: { ...state.kioskHomeSettings, ...changes } });

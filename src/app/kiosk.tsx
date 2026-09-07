@@ -4,12 +4,12 @@
 // rather than a multi-route flow, matching how /staff and /rider are
 // also single, self-contained kiosk routes.
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import Head from 'expo-router/head';
 import { fetchMenu, MenuItem } from '../data/menu';
 import { KIOSK_CATEGORIES, kioskCategoryKey, KioskCategory } from '../data/kioskCategories';
-import { lineUnitPrice, useStore } from '../context/StoreContext';
+import { KioskHomeSettings, lineUnitPrice, useStore } from '../context/StoreContext';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
 import { formatPrice } from '../lib/format';
 import { supabase } from '../lib/supabase';
@@ -52,8 +52,18 @@ const HOME_KEY = 'home';
 
 export default function KioskScreen() {
   const params = useLocalSearchParams<{ confirmed?: string; orderId?: string }>();
-  const { cart, cartCount, cartSubtotal, updateQuantity, removeFromCart, clearCart, placeKioskOrder, kioskHomeSettings } =
-    useStore();
+  const {
+    cart,
+    cartCount,
+    cartSubtotal,
+    updateQuantity,
+    removeFromCart,
+    clearCart,
+    placeKioskOrder,
+    kioskHomeSettings,
+    appSettings,
+    lookupVoucherByCode,
+  } = useStore();
 
   const [screen, setScreen] = useState<KioskScreen>('idle');
   const [menuItems, setMenuItems] = useState<MenuItem[] | null>(null);
@@ -64,7 +74,51 @@ export default function KioskScreen() {
   const [confirmedOrderId, setConfirmedOrderId] = useState<string | null>(null);
   const [readerConnected, setReaderConnected] = useState(false);
   const [readerChecking, setReaderChecking] = useState(false);
+  const [promoInput, setPromoInput] = useState('');
+  const [appliedVoucher, setAppliedVoucher] = useState<Awaited<ReturnType<typeof lookupVoucherByCode>>>(null);
+  const [promoApplied, setPromoApplied] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [checkingCode, setCheckingCode] = useState(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const promoCode = appSettings.promoCode.trim().toUpperCase();
+  const discount = appliedVoucher
+    ? Math.min(
+        appliedVoucher.type === 'percent' ? cartSubtotal * (appliedVoucher.value / 100) : appliedVoucher.value,
+        cartSubtotal
+      )
+    : promoApplied
+    ? cartSubtotal * appSettings.promoDiscount
+    : 0;
+  const cartTotal = Math.max(cartSubtotal - discount, 0);
+
+  const applyCode = async () => {
+    const raw = promoInput.trim();
+    if (!raw) return;
+    setCodeError(null);
+    const upper = raw.toUpperCase();
+    if (promoCode && upper === promoCode) {
+      setPromoApplied(true);
+      setAppliedVoucher(null);
+      return;
+    }
+    setCheckingCode(true);
+    const voucher = await lookupVoucherByCode(upper);
+    setCheckingCode(false);
+    if (!voucher) {
+      setCodeError("That code isn't valid — check the spelling or it may already be used.");
+      return;
+    }
+    setAppliedVoucher(voucher);
+    setPromoApplied(false);
+  };
+
+  const removeCode = () => {
+    setAppliedVoucher(null);
+    setPromoApplied(false);
+    setPromoInput('');
+    setCodeError(null);
+  };
 
   // Best-effort, silent attempt at startup to find a paired Stripe Terminal
   // card reader (see lib/cardTerminal.ts). If none is set up yet — the
@@ -87,6 +141,7 @@ export default function KioskScreen() {
       setConfirmedOrderId(String(params.orderId));
       setScreen('confirmation');
       clearCart();
+      removeCode();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.confirmed, params.orderId]);
@@ -100,6 +155,7 @@ export default function KioskScreen() {
     if (screen === 'idle' || screen === 'confirmation') return;
     idleTimer.current = setTimeout(() => {
       clearCart();
+      removeCode();
       setActiveCategory(HOME_KEY);
       setScreen('idle');
     }, IDLE_TIMEOUT_MS);
@@ -124,6 +180,7 @@ export default function KioskScreen() {
 
   const startOrder = () => {
     clearCart();
+    removeCode();
     setOrderError(null);
     setActiveCategory(HOME_KEY);
     setScreen('menu');
@@ -133,6 +190,7 @@ export default function KioskScreen() {
   // coming back, without waiting for the idle timeout.
   const startOver = () => {
     clearCart();
+    removeCode();
     setOrderError(null);
     setActiveCategory(HOME_KEY);
     setScreen('menu');
@@ -141,7 +199,11 @@ export default function KioskScreen() {
   const handlePayCounter = async () => {
     setPlacing(true);
     setOrderError(null);
-    const orderId = await placeKioskOrder('kiosk-counter');
+    const orderId = await placeKioskOrder(
+      'kiosk-counter',
+      appliedVoucher?.id,
+      promoApplied ? promoCode : undefined
+    );
     setPlacing(false);
     if (!orderId) {
       setOrderError("Sorry, that didn't go through — please try again or ask a staff member.");
@@ -154,7 +216,11 @@ export default function KioskScreen() {
   const handlePayCard = async () => {
     setPlacing(true);
     setOrderError(null);
-    const orderId = await placeKioskOrder('kiosk-card');
+    const orderId = await placeKioskOrder(
+      'kiosk-card',
+      appliedVoucher?.id,
+      promoApplied ? promoCode : undefined
+    );
     if (!orderId) {
       setPlacing(false);
       setOrderError("Sorry, that didn't go through — please try again or ask a staff member.");
@@ -204,7 +270,7 @@ export default function KioskScreen() {
   return (
     <View style={styles.screen} onTouchStart={resetIdleTimer}>
       <KioskHeadTags />
-      {screen === 'idle' && <IdleScreen onStart={startOrder} />}
+      {screen === 'idle' && <IdleScreen onStart={startOrder} promoImageUrl={kioskHomeSettings.idlePromoImageUrl} />}
 
       {screen === 'menu' && (
         <MenuScreen
@@ -224,16 +290,26 @@ export default function KioskScreen() {
         <CartScreen
           cart={cart}
           subtotal={cartSubtotal}
+          discount={discount}
+          total={cartTotal}
           onUpdateQuantity={updateQuantity}
           onRemove={removeFromCart}
           onBackToMenu={() => setScreen('menu')}
           onCheckout={() => setScreen('payment')}
+          promoInput={promoInput}
+          onPromoInputChange={setPromoInput}
+          onApplyCode={applyCode}
+          onRemoveCode={removeCode}
+          codeApplied={!!appliedVoucher || promoApplied}
+          codeError={codeError}
+          checkingCode={checkingCode}
+          appliedLabel={appliedVoucher ? appliedVoucher.description : promoApplied ? `Promo (${promoCode})` : null}
         />
       )}
 
       {screen === 'payment' && (
         <PaymentScreen
-          subtotal={cartSubtotal}
+          subtotal={cartTotal}
           placing={placing}
           error={orderError}
           readerConnected={readerConnected}
@@ -260,7 +336,18 @@ export default function KioskScreen() {
   );
 }
 
-function IdleScreen({ onStart }: { onStart: () => void }) {
+function IdleScreen({ onStart, promoImageUrl }: { onStart: () => void; promoImageUrl: string | null }) {
+  if (promoImageUrl) {
+    return (
+      <Pressable style={styles.idlePromoScreen} onPress={onStart}>
+        <Image source={{ uri: promoImageUrl }} style={styles.idlePromoImage} resizeMode="cover" />
+        <View style={styles.idlePromoOverlay}>
+          <Text style={styles.idlePromoTapText}>Tap anywhere to start your order</Text>
+        </View>
+      </Pressable>
+    );
+  }
+
   return (
     <Pressable style={styles.idleScreen} onPress={onStart}>
       <View style={styles.poweredByTop}>
@@ -318,7 +405,7 @@ function MenuScreen({
   onStartOver,
 }: {
   items: MenuItem[] | null;
-  homeSettings: { featuredCategoryKeys: string[]; popularItemIds: string[] };
+  homeSettings: KioskHomeSettings;
   activeCategory: string;
   onCategoryChange: (c: string) => void;
   onSelectItem: (item: MenuItem) => void;
@@ -355,9 +442,15 @@ function MenuScreen({
     .map((id) => itemsById.get(id))
     .filter((item): item is MenuItem => Boolean(item));
 
+  const iconFor = (key: string) => homeSettings.categoryImages?.[key];
+
   return (
     <View style={styles.menuLayout}>
       <ScrollView style={styles.sidebar} contentContainerStyle={styles.sidebarContent}>
+        <View style={styles.sidebarBrand}>
+          <Image source={require('../assets/zamzam-logo.png')} style={styles.sidebarBrandLogo} resizeMode="contain" />
+        </View>
+
         <Pressable
           style={[styles.sidebarItem, isHome && { backgroundColor: colors.forest + '17' }]}
           onPress={() => onCategoryChange(HOME_KEY)}
@@ -365,11 +458,14 @@ function MenuScreen({
           <View style={[styles.sidebarIconWrap, { backgroundColor: colors.forest + (isHome ? '33' : '18') }]}>
             <Text style={styles.sidebarEmoji}>🏠</Text>
           </View>
-          <Text style={[styles.sidebarLabel, isHome && { color: colors.ink, fontWeight: '700' }]}>Home</Text>
+          <Text style={[styles.sidebarLabel, isHome && { color: colors.ink, fontWeight: '700' }]} numberOfLines={1}>
+            Home
+          </Text>
         </Pressable>
 
         {availableCategories.map((c) => {
           const active = c.key === effectiveKey && !isHome;
+          const photo = iconFor(c.key);
           return (
             <Pressable
               key={c.key}
@@ -377,9 +473,13 @@ function MenuScreen({
               onPress={() => onCategoryChange(c.key)}
             >
               <View style={[styles.sidebarIconWrap, { backgroundColor: c.color + (active ? '33' : '18') }]}>
-                <Text style={styles.sidebarEmoji}>{c.emoji}</Text>
+                {photo ? (
+                  <Image source={{ uri: photo }} style={styles.sidebarIconPhoto} resizeMode="cover" />
+                ) : (
+                  <Text style={styles.sidebarEmoji}>{c.emoji}</Text>
+                )}
               </View>
-              <Text style={[styles.sidebarLabel, active && { color: colors.ink, fontWeight: '700' }]} numberOfLines={2}>
+              <Text style={[styles.sidebarLabel, active && { color: colors.ink, fontWeight: '700' }]} numberOfLines={1}>
                 {c.label}
               </Text>
             </Pressable>
@@ -394,16 +494,29 @@ function MenuScreen({
               <View style={styles.homeSection}>
                 <Text style={styles.homeSectionTitle}>Discover our menu</Text>
                 <View style={styles.tileGrid}>
-                  {featuredCategories.map((c) => (
-                    <Pressable
-                      key={c.key}
-                      style={[styles.tile, { backgroundColor: c.color + '17' }]}
-                      onPress={() => onCategoryChange(c.key)}
-                    >
-                      <Text style={styles.tileEmoji}>{c.emoji}</Text>
-                      <Text style={styles.tileLabel}>{c.label}</Text>
-                    </Pressable>
-                  ))}
+                  {featuredCategories.map((c) => {
+                    const photo = iconFor(c.key);
+                    return (
+                      <Pressable
+                        key={c.key}
+                        style={[styles.tile, !photo && { backgroundColor: c.color + '17' }]}
+                        onPress={() => onCategoryChange(c.key)}
+                      >
+                        {photo ? (
+                          <>
+                            <Image source={{ uri: photo }} style={styles.tilePhoto} resizeMode="cover" />
+                            <View style={styles.tilePhotoOverlay} />
+                            <Text style={[styles.tileLabel, styles.tileLabelOnPhoto]}>{c.label}</Text>
+                          </>
+                        ) : (
+                          <>
+                            <Text style={styles.tileEmoji}>{c.emoji}</Text>
+                            <Text style={styles.tileLabel}>{c.label}</Text>
+                          </>
+                        )}
+                      </Pressable>
+                    );
+                  })}
                 </View>
               </View>
             )}
@@ -455,17 +568,37 @@ function MenuScreen({
 function CartScreen({
   cart,
   subtotal,
+  discount,
+  total,
   onUpdateQuantity,
   onRemove,
   onBackToMenu,
   onCheckout,
+  promoInput,
+  onPromoInputChange,
+  onApplyCode,
+  onRemoveCode,
+  codeApplied,
+  codeError,
+  checkingCode,
+  appliedLabel,
 }: {
   cart: ReturnType<typeof useStore>['cart'];
   subtotal: number;
+  discount: number;
+  total: number;
   onUpdateQuantity: (lineId: string, quantity: number) => void;
   onRemove: (lineId: string) => void;
   onBackToMenu: () => void;
   onCheckout: () => void;
+  promoInput: string;
+  onPromoInputChange: (v: string) => void;
+  onApplyCode: () => void;
+  onRemoveCode: () => void;
+  codeApplied: boolean;
+  codeError: string | null;
+  checkingCode: boolean;
+  appliedLabel: string | null;
 }) {
   return (
     <View style={styles.contentScreen}>
@@ -496,6 +629,51 @@ function CartScreen({
             </View>
           </View>
         ))}
+
+        {cart.length > 0 && (
+          <View style={styles.codeSection}>
+            <Text style={typography.label}>VOUCHER OR GIFT CODE</Text>
+            <View style={styles.codeRow}>
+              <TextInput
+                value={promoInput}
+                onChangeText={onPromoInputChange}
+                placeholder="Enter code"
+                placeholderTextColor={colors.inkMuted}
+                autoCapitalize="characters"
+                editable={!codeApplied}
+                style={[styles.input, { flex: 1 }]}
+              />
+              <Pressable
+                style={[styles.codeButton, codeApplied && styles.codeButtonDisabled]}
+                onPress={codeApplied ? onRemoveCode : onApplyCode}
+                disabled={checkingCode}
+              >
+                <Text style={styles.codeButtonText}>
+                  {checkingCode ? '…' : codeApplied ? 'Remove' : 'Apply'}
+                </Text>
+              </Pressable>
+            </View>
+            {codeError && <Text style={styles.errorText}>{codeError}</Text>}
+            {appliedLabel && <Text style={styles.codeAppliedText}>Applied: {appliedLabel}</Text>}
+
+            <View style={styles.totalsBlock}>
+              <View style={styles.totalsRow}>
+                <Text style={typography.bodyMuted}>Subtotal</Text>
+                <Text style={typography.body}>{formatPrice(subtotal)}</Text>
+              </View>
+              {discount > 0 && (
+                <View style={styles.totalsRow}>
+                  <Text style={[typography.bodyMuted, { color: colors.forest }]}>Discount</Text>
+                  <Text style={[typography.body, { color: colors.forest }]}>−{formatPrice(discount)}</Text>
+                </View>
+              )}
+              <View style={[styles.totalsRow, { marginTop: spacing.xs }]}>
+                <Text style={typography.h3}>Total</Text>
+                <Text style={typography.h3}>{formatPrice(total)}</Text>
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.footerBar}>
@@ -507,7 +685,7 @@ function CartScreen({
           onPress={onCheckout}
           disabled={cart.length === 0}
         >
-          <Text style={styles.primaryButtonText}>Checkout · {formatPrice(subtotal)}</Text>
+          <Text style={styles.primaryButtonText}>Checkout · {formatPrice(total)}</Text>
         </Pressable>
       </View>
     </View>
@@ -645,6 +823,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.xl,
   },
+  idlePromoScreen: {
+    flex: 1,
+  },
+  idlePromoImage: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+  },
+  idlePromoOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  idlePromoTapText: {
+    color: colors.white,
+    fontSize: 20,
+    fontWeight: '700',
+  },
   confirmationScreen: {
     flexGrow: 1,
     alignItems: 'center',
@@ -758,7 +956,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   sidebar: {
-    width: 168,
+    width: 132,
+    flexGrow: 0,
+    flexShrink: 0,
     backgroundColor: colors.cream,
     borderRightWidth: 1,
     borderRightColor: colors.border,
@@ -767,28 +967,46 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     gap: spacing.xs,
   },
+  sidebarBrand: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1A1A1A',
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  sidebarBrandLogo: {
+    width: 104,
+    height: 38,
+  },
   sidebarItem: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
     paddingHorizontal: spacing.xs,
     borderRadius: radii.md,
   },
   sidebarIconWrap: {
-    width: 44,
-    height: 44,
+    width: 32,
+    height: 32,
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  sidebarIconPhoto: {
+    width: '100%',
+    height: '100%',
   },
   sidebarEmoji: {
-    fontSize: 20,
+    fontSize: 16,
   },
   sidebarLabel: {
-    fontSize: 12,
+    flex: 1,
+    fontSize: 11,
     fontWeight: '600',
     color: colors.inkMuted,
-    textAlign: 'center',
   },
   mainPanel: {
     flex: 1,
@@ -885,6 +1103,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
+    overflow: 'hidden',
   },
   tileEmoji: {
     fontSize: 34,
@@ -893,6 +1112,16 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: colors.ink,
+  },
+  tilePhoto: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+  },
+  tilePhotoOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  tileLabelOnPhoto: {
+    color: colors.white,
   },
   popularRow: {
     flexDirection: 'row',
@@ -983,6 +1212,56 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     minWidth: 24,
     textAlign: 'center',
+  },
+  codeSection: {
+    marginTop: spacing.lg,
+    paddingTop: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  codeRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  input: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    fontSize: 15,
+    color: colors.ink,
+  },
+  codeButton: {
+    backgroundColor: colors.forest,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  codeButtonDisabled: {
+    backgroundColor: colors.danger,
+  },
+  codeButtonText: {
+    color: colors.white,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  codeAppliedText: {
+    color: colors.forest,
+    fontWeight: '600',
+    fontSize: 13,
+    marginTop: spacing.xs,
+  },
+  totalsBlock: {
+    marginTop: spacing.lg,
+  },
+  totalsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
   },
   footerBar: {
     flexDirection: 'row',

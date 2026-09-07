@@ -2,7 +2,7 @@
 // "not authorized"; admin -> the dashboard (Settings / Customers / Orders).
 // Real enforcement is server-side (Supabase RLS via is_admin()); this
 // screen just decides what to render for the current viewer.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -3767,15 +3767,25 @@ function ZamZamSalesTab() {
 // "Popular Choices", both in whatever order chosen here. Backed by
 // kiosk_home_settings (see supabase/kiosk_home_schema.sql); read by
 // app/kiosk.tsx.
+const KioskHomeFileInputEl = 'input' as unknown as React.ComponentType<
+  React.InputHTMLAttributes<HTMLInputElement> & { ref?: React.Ref<HTMLInputElement> }
+>;
+
 function KioskHomeTab() {
-  const { fetchAllMenuItemsAdmin, kioskHomeSettings, updateKioskHomeSettings } = useStore();
+  const { fetchAllMenuItemsAdmin, kioskHomeSettings, updateKioskHomeSettings, uploadDishPhoto } = useStore();
   const [items, setItems] = useState<AdminMenuItem[] | null>(null);
   const [draftFeatured, setDraftFeatured] = useState<string[]>(kioskHomeSettings.featuredCategoryKeys);
   const [draftPopular, setDraftPopular] = useState<string[]>(kioskHomeSettings.popularItemIds);
+  const [draftCategoryImages, setDraftCategoryImages] = useState<Record<string, string>>(kioskHomeSettings.categoryImages);
+  const [draftIdlePromo, setDraftIdlePromo] = useState<string | null>(kioskHomeSettings.idlePromoImageUrl);
   const [itemSearch, setItemSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
+  const categoryFileInputRef = useRef<HTMLInputElement | null>(null);
+  const promoFileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
     fetchAllMenuItemsAdmin().then((all) => setItems(all.filter((i) => i.groupId === ZAMZAM_GROUP_ID)));
@@ -3785,8 +3795,15 @@ function KioskHomeTab() {
   useEffect(() => {
     setDraftFeatured(kioskHomeSettings.featuredCategoryKeys);
     setDraftPopular(kioskHomeSettings.popularItemIds);
+    setDraftCategoryImages(kioskHomeSettings.categoryImages);
+    setDraftIdlePromo(kioskHomeSettings.idlePromoImageUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kioskHomeSettings.featuredCategoryKeys.join(','), kioskHomeSettings.popularItemIds.join(',')]);
+  }, [
+    kioskHomeSettings.featuredCategoryKeys.join(','),
+    kioskHomeSettings.popularItemIds.join(','),
+    JSON.stringify(kioskHomeSettings.categoryImages),
+    kioskHomeSettings.idlePromoImageUrl,
+  ]);
 
   const moveInList = (list: string[], setList: (v: string[]) => void, index: number, direction: -1 | 1) => {
     const next = [...list];
@@ -3796,11 +3813,42 @@ function KioskHomeTab() {
     setList(next);
   };
 
+  const pickCategoryPhoto = (key: string) => {
+    uploadTargetRef.current = key;
+    categoryFileInputRef.current?.click();
+  };
+
+  const handleCategoryFileChange = (e: any) => {
+    const file = e.target?.files?.[0] as File | undefined;
+    const key = uploadTargetRef.current;
+    if (!file || !key) return;
+    setUploadingKey(key);
+    uploadDishPhoto(file).then(({ url }) => {
+      setUploadingKey(null);
+      if (url) setDraftCategoryImages((prev) => ({ ...prev, [key]: url }));
+    });
+  };
+
+  const handlePromoFileChange = (e: any) => {
+    const file = e.target?.files?.[0] as File | undefined;
+    if (!file) return;
+    setUploadingKey('__promo__');
+    uploadDishPhoto(file).then(({ url }) => {
+      setUploadingKey(null);
+      if (url) setDraftIdlePromo(url);
+    });
+  };
+
   const save = async () => {
     setSaving(true);
     setSaved(false);
     setSaveError(null);
-    const { error } = await updateKioskHomeSettings({ featuredCategoryKeys: draftFeatured, popularItemIds: draftPopular });
+    const { error } = await updateKioskHomeSettings({
+      featuredCategoryKeys: draftFeatured,
+      popularItemIds: draftPopular,
+      categoryImages: draftCategoryImages,
+      idlePromoImageUrl: draftIdlePromo,
+    });
     setSaving(false);
     if (error) {
       setSaveError(error);
@@ -3831,13 +3879,39 @@ function KioskHomeTab() {
       {draftFeatured.map((key, index) => {
         const cat = KIOSK_CATEGORIES.find((c) => c.key === key);
         if (!cat) return null;
+        const photo = draftCategoryImages[key];
         return (
           <View key={key} style={styles.rowCard}>
-            <View style={[styles.menuThumb, styles.menuThumbEmoji, { backgroundColor: cat.color + '22' }]}>
-              <Text style={{ fontSize: 20 }}>{cat.emoji}</Text>
-            </View>
+            {photo ? (
+              <Image source={{ uri: photo }} style={styles.menuThumb} resizeMode="cover" />
+            ) : (
+              <View style={[styles.menuThumb, styles.menuThumbEmoji, { backgroundColor: cat.color + '22' }]}>
+                <Text style={{ fontSize: 20 }}>{cat.emoji}</Text>
+              </View>
+            )}
             <Text style={[typography.body, { flex: 1, marginLeft: spacing.sm }]}>{cat.label}</Text>
-            <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, justifyContent: 'flex-end', maxWidth: 260 }}>
+              <Pressable
+                style={styles.smallButton}
+                onPress={() => pickCategoryPhoto(key)}
+                disabled={uploadingKey === key}
+              >
+                <Text style={styles.smallButtonText}>{uploadingKey === key ? 'Uploading…' : 'Photo'}</Text>
+              </Pressable>
+              {photo && (
+                <Pressable
+                  style={styles.smallButton}
+                  onPress={() =>
+                    setDraftCategoryImages((prev) => {
+                      const next = { ...prev };
+                      delete next[key];
+                      return next;
+                    })
+                  }
+                >
+                  <Text style={styles.smallButtonText}>Clear</Text>
+                </Pressable>
+              )}
               <Pressable
                 style={styles.smallButton}
                 onPress={() => moveInList(draftFeatured, setDraftFeatured, index, -1)}
@@ -3862,6 +3936,13 @@ function KioskHomeTab() {
           </View>
         );
       })}
+      <KioskHomeFileInputEl
+        ref={categoryFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleCategoryFileChange}
+        style={{ display: 'none' }}
+      />
 
       {availableCategoriesToAdd.length > 0 && (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm }}>
@@ -3954,6 +4035,45 @@ function KioskHomeTab() {
           ))}
         </>
       )}
+
+      <Text style={[typography.label, { marginTop: spacing.xl }]}>IDLE SCREEN OFFER</Text>
+      <Text style={[typography.bodyMuted, { marginTop: spacing.xs }]}>
+        A full-screen image shown while the kiosk is waiting for a customer — use it to advertise a current offer.
+        Leave empty to keep the normal Zam Zam / Planetary Eats welcome screen.
+      </Text>
+      <View style={[styles.rowCard, { marginTop: spacing.sm }]}>
+        {draftIdlePromo ? (
+          <Image source={{ uri: draftIdlePromo }} style={styles.menuThumb} resizeMode="cover" />
+        ) : (
+          <View style={[styles.menuThumb, styles.menuThumbEmoji]}>
+            <Text style={{ fontSize: 20 }}>🖼️</Text>
+          </View>
+        )}
+        <Text style={[typography.body, { flex: 1, marginLeft: spacing.sm }]}>
+          {draftIdlePromo ? 'Offer image set' : 'No offer image'}
+        </Text>
+        <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+          <Pressable
+            style={styles.smallButton}
+            onPress={() => promoFileInputRef.current?.click()}
+            disabled={uploadingKey === '__promo__'}
+          >
+            <Text style={styles.smallButtonText}>{uploadingKey === '__promo__' ? 'Uploading…' : 'Upload'}</Text>
+          </Pressable>
+          {draftIdlePromo && (
+            <Pressable style={styles.smallButton} onPress={() => setDraftIdlePromo(null)}>
+              <Text style={styles.smallButtonText}>Clear</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+      <KioskHomeFileInputEl
+        ref={promoFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handlePromoFileChange}
+        style={{ display: 'none' }}
+      />
 
       <Pressable style={[styles.saveButton, { marginTop: spacing.xl }]} onPress={save} disabled={saving}>
         <Text style={styles.saveButtonText}>{saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save kiosk home layout'}</Text>

@@ -69,12 +69,43 @@ module.exports = async (req, res) => {
   try {
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .select('id, user_id, lines, fulfillment')
+      .select('id, user_id, lines, fulfillment, total, source')
       .eq('id', orderId)
       .maybeSingle();
 
     if (orderError || !order || !Array.isArray(order.lines) || order.lines.length === 0) {
       res.status(404).json({ error: 'Order not found' });
+      return;
+    }
+
+    // A kiosk order's `total` is already fully verified — place_kiosk_order
+    // (a security-definer RPC) is the only thing that ever sets it, and it
+    // already recomputed every line from menu_items and resolved any
+    // voucher/promo code server-side. Charge that number directly instead
+    // of re-deriving pricing and re-resolving a discount here, which would
+    // both duplicate that work and risk under-crediting a voucher that
+    // place_kiosk_order already marked redeemed.
+    if (order.source === 'kiosk') {
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        payment_method_types: ['card'],
+        line_items: [
+          {
+            price_data: {
+              currency: 'eur',
+              product_data: { name: 'Zam Zam Döner order' },
+              unit_amount: Math.round(Number(order.total) * 100),
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: `${origin}${successPath || '/order-confirmation'}${
+          (successPath || '').includes('?') ? '&' : '?'
+        }orderId=${encodeURIComponent(orderId)}`,
+        cancel_url: `${origin}${cancelPath || '/checkout'}`,
+        metadata: { orderId },
+      });
+      res.status(200).json({ url: session.url });
       return;
     }
 
