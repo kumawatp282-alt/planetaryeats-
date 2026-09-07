@@ -23,6 +23,7 @@ import {
 } from '../context/StoreContext';
 import { hashEmployeeCode } from '../context/EmployeeAuthContext';
 import { Nutrition } from '../data/menu';
+import { KIOSK_CATEGORIES } from '../data/kioskCategories';
 import AuthForm from '../components/AuthForm';
 import ReceiptView from '../components/ReceiptView';
 import MenuItemEditorModal from '../components/MenuItemEditorModal';
@@ -3419,11 +3420,12 @@ function BusinessSection() {
   );
 }
 
-type ZamZamTab = 'menu' | 'inventory' | 'sales';
+type ZamZamTab = 'menu' | 'inventory' | 'sales' | 'kioskHome';
 const ZAMZAM_TAB_LABELS: Record<ZamZamTab, string> = {
   menu: 'Menu',
   inventory: 'Inventory',
   sales: 'Sales',
+  kioskHome: 'Kiosk Home',
 };
 
 function ZamZamSection() {
@@ -3448,6 +3450,7 @@ function ZamZamSection() {
       {tab === 'menu' && <ZamZamMenuTab />}
       {tab === 'inventory' && <ZamZamInventoryTab />}
       {tab === 'sales' && <ZamZamSalesTab />}
+      {tab === 'kioskHome' && <KioskHomeTab />}
     </ScrollView>
   );
 }
@@ -3755,6 +3758,207 @@ function ZamZamSalesTab() {
           </Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+// Lets the admin control the kiosk's home screen by hand — which category
+// tiles show under "Discover our menu" and which dishes show under
+// "Popular Choices", both in whatever order chosen here. Backed by
+// kiosk_home_settings (see supabase/kiosk_home_schema.sql); read by
+// app/kiosk.tsx.
+function KioskHomeTab() {
+  const { fetchAllMenuItemsAdmin, kioskHomeSettings, updateKioskHomeSettings } = useStore();
+  const [items, setItems] = useState<AdminMenuItem[] | null>(null);
+  const [draftFeatured, setDraftFeatured] = useState<string[]>(kioskHomeSettings.featuredCategoryKeys);
+  const [draftPopular, setDraftPopular] = useState<string[]>(kioskHomeSettings.popularItemIds);
+  const [itemSearch, setItemSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchAllMenuItemsAdmin().then((all) => setItems(all.filter((i) => i.groupId === ZAMZAM_GROUP_ID)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    setDraftFeatured(kioskHomeSettings.featuredCategoryKeys);
+    setDraftPopular(kioskHomeSettings.popularItemIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kioskHomeSettings.featuredCategoryKeys.join(','), kioskHomeSettings.popularItemIds.join(',')]);
+
+  const moveInList = (list: string[], setList: (v: string[]) => void, index: number, direction: -1 | 1) => {
+    const next = [...list];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    setList(next);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setSaved(false);
+    setSaveError(null);
+    const { error } = await updateKioskHomeSettings({ featuredCategoryKeys: draftFeatured, popularItemIds: draftPopular });
+    setSaving(false);
+    if (error) {
+      setSaveError(error);
+      return;
+    }
+    setSaved(true);
+  };
+
+  const itemsById = new Map((items ?? []).map((i) => [i.id, i]));
+  const availableCategoriesToAdd = KIOSK_CATEGORIES.filter((c) => !draftFeatured.includes(c.key));
+  const popularCandidates = (items ?? [])
+    .filter((i) => !draftPopular.includes(i.id))
+    .filter((i) => i.name.toLowerCase().includes(itemSearch.trim().toLowerCase()));
+
+  return (
+    <View>
+      <View style={styles.privateBanner}>
+        <Text style={styles.privateBannerText}>
+          Controls the kiosk's home screen — the tiles under "Discover our menu" and the dishes under "Popular
+          Choices", in this order. Nothing here is live until you tap Save.
+        </Text>
+      </View>
+
+      <Text style={[typography.label, { marginTop: spacing.lg }]}>DISCOVER OUR MENU — FEATURED TILES</Text>
+      {draftFeatured.length === 0 && (
+        <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>No tiles yet — add one below.</Text>
+      )}
+      {draftFeatured.map((key, index) => {
+        const cat = KIOSK_CATEGORIES.find((c) => c.key === key);
+        if (!cat) return null;
+        return (
+          <View key={key} style={styles.rowCard}>
+            <View style={[styles.menuThumb, styles.menuThumbEmoji, { backgroundColor: cat.color + '22' }]}>
+              <Text style={{ fontSize: 20 }}>{cat.emoji}</Text>
+            </View>
+            <Text style={[typography.body, { flex: 1, marginLeft: spacing.sm }]}>{cat.label}</Text>
+            <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+              <Pressable
+                style={styles.smallButton}
+                onPress={() => moveInList(draftFeatured, setDraftFeatured, index, -1)}
+                disabled={index === 0}
+              >
+                <Text style={styles.smallButtonText}>↑</Text>
+              </Pressable>
+              <Pressable
+                style={styles.smallButton}
+                onPress={() => moveInList(draftFeatured, setDraftFeatured, index, 1)}
+                disabled={index === draftFeatured.length - 1}
+              >
+                <Text style={styles.smallButtonText}>↓</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.smallButton, styles.banButton]}
+                onPress={() => setDraftFeatured(draftFeatured.filter((k) => k !== key))}
+              >
+                <Text style={styles.smallButtonText}>Remove</Text>
+              </Pressable>
+            </View>
+          </View>
+        );
+      })}
+
+      {availableCategoriesToAdd.length > 0 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm }}>
+          {availableCategoriesToAdd.map((c) => (
+            <Pressable
+              key={c.key}
+              style={styles.smallButton}
+              onPress={() => setDraftFeatured([...draftFeatured, c.key])}
+            >
+              <Text style={styles.smallButtonText}>
+                + {c.emoji} {c.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      <Text style={[typography.label, { marginTop: spacing.xl }]}>POPULAR CHOICES</Text>
+      {!items && <ActivityIndicator color={colors.forest} style={{ marginTop: spacing.md }} />}
+      {items && draftPopular.length === 0 && (
+        <Text style={[typography.bodyMuted, { marginTop: spacing.sm }]}>No dishes yet — add one below.</Text>
+      )}
+      {draftPopular.map((id, index) => {
+        const item = itemsById.get(id);
+        if (!item) return null;
+        return (
+          <View key={id} style={styles.rowCard}>
+            {item.dishImage ? (
+              <Image source={item.dishImage} style={styles.menuThumb} resizeMode="cover" />
+            ) : (
+              <View style={[styles.menuThumb, styles.menuThumbEmoji]}>
+                <Text style={{ fontSize: 20 }}>{item.emoji}</Text>
+              </View>
+            )}
+            <View style={{ flex: 1, marginLeft: spacing.sm }}>
+              <Text style={typography.body}>{item.name}</Text>
+              <Text style={typography.bodyMuted}>{formatPrice(item.price)}</Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+              <Pressable
+                style={styles.smallButton}
+                onPress={() => moveInList(draftPopular, setDraftPopular, index, -1)}
+                disabled={index === 0}
+              >
+                <Text style={styles.smallButtonText}>↑</Text>
+              </Pressable>
+              <Pressable
+                style={styles.smallButton}
+                onPress={() => moveInList(draftPopular, setDraftPopular, index, 1)}
+                disabled={index === draftPopular.length - 1}
+              >
+                <Text style={styles.smallButtonText}>↓</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.smallButton, styles.banButton]}
+                onPress={() => setDraftPopular(draftPopular.filter((x) => x !== id))}
+              >
+                <Text style={styles.smallButtonText}>Remove</Text>
+              </Pressable>
+            </View>
+          </View>
+        );
+      })}
+
+      {items && (
+        <>
+          <TextInput
+            style={[styles.input, { marginTop: spacing.md }]}
+            placeholder="Search dishes to add…"
+            value={itemSearch}
+            onChangeText={setItemSearch}
+          />
+          {popularCandidates.slice(0, 8).map((item) => (
+            <View key={item.id} style={styles.rowCard}>
+              {item.dishImage ? (
+                <Image source={item.dishImage} style={styles.menuThumb} resizeMode="cover" />
+              ) : (
+                <View style={[styles.menuThumb, styles.menuThumbEmoji]}>
+                  <Text style={{ fontSize: 20 }}>{item.emoji}</Text>
+                </View>
+              )}
+              <View style={{ flex: 1, marginLeft: spacing.sm }}>
+                <Text style={typography.body}>{item.name}</Text>
+                <Text style={typography.bodyMuted}>{formatPrice(item.price)}</Text>
+              </View>
+              <Pressable style={styles.smallButton} onPress={() => setDraftPopular([...draftPopular, item.id])}>
+                <Text style={styles.smallButtonText}>+ Add</Text>
+              </Pressable>
+            </View>
+          ))}
+        </>
+      )}
+
+      <Pressable style={[styles.saveButton, { marginTop: spacing.xl }]} onPress={save} disabled={saving}>
+        <Text style={styles.saveButtonText}>{saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save kiosk home layout'}</Text>
+      </Pressable>
+      {saveError && <Text style={[typography.bodyMuted, { marginTop: spacing.sm, color: colors.danger }]}>{saveError}</Text>}
     </View>
   );
 }

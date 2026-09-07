@@ -89,6 +89,16 @@ export interface ManualOrderInput {
 
 export type DeliveryCheckStatus = 'idle' | 'checking' | 'ok' | 'too-far' | 'not-found' | 'closed-area';
 
+// Admin-editable kiosk home-screen layout — see supabase/kiosk_home_schema.sql.
+// Lets the kiosk's "Discover our menu" tiles and "Popular Choices" row be
+// changed by hand from /admin (e.g. featuring a new döner) with no code
+// change. Category keys are from data/kioskCategories.ts; item ids from
+// menu_items.
+export interface KioskHomeSettings {
+  featuredCategoryKeys: string[];
+  popularItemIds: string[];
+}
+
 export interface AppSettings {
   restaurantName: string;
   restaurantLat: number;
@@ -322,6 +332,11 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   weeklyOperatingCosts: 0,
 };
 
+const DEFAULT_KIOSK_HOME_SETTINGS: KioskHomeSettings = {
+  featuredCategoryKeys: ['doner', 'chicken', 'burgers', 'wings'],
+  popularItemIds: [],
+};
+
 interface StoreState {
   cart: CartLine[];
   orders: Order[];
@@ -332,6 +347,7 @@ interface StoreState {
   deliveryCheckStatus: DeliveryCheckStatus;
   deliveryDistanceKm: number | null;
   appSettings: AppSettings;
+  kioskHomeSettings: KioskHomeSettings;
 }
 
 type StoreAction =
@@ -360,7 +376,8 @@ type StoreAction =
       distanceKm: number | null;
     }
   | { type: 'SET_DELIVERY_CHECKING' }
-  | { type: 'SET_APP_SETTINGS'; settings: AppSettings };
+  | { type: 'SET_APP_SETTINGS'; settings: AppSettings }
+  | { type: 'SET_KIOSK_HOME_SETTINGS'; settings: KioskHomeSettings };
 
 const DELIVERY_FEE = 2.99;
 
@@ -374,6 +391,7 @@ const initialState: StoreState = {
   deliveryCheckStatus: 'idle',
   deliveryDistanceKm: null,
   appSettings: DEFAULT_APP_SETTINGS,
+  kioskHomeSettings: DEFAULT_KIOSK_HOME_SETTINGS,
 };
 
 const STATUS_SEQUENCE: OrderStatus[] = ['placed', 'preparing', 'out_for_delivery', 'delivered'];
@@ -463,6 +481,8 @@ function storeReducer(state: StoreState, action: StoreAction): StoreState {
       };
     case 'SET_APP_SETTINGS':
       return { ...state, appSettings: action.settings };
+    case 'SET_KIOSK_HOME_SETTINGS':
+      return { ...state, kioskHomeSettings: action.settings };
     default:
       return state;
   }
@@ -516,6 +536,7 @@ interface StoreContextValue extends StoreState {
       >
     >
   ) => Promise<{ error: string | null }>;
+  updateKioskHomeSettings: (changes: Partial<KioskHomeSettings>) => Promise<{ error: string | null }>;
   fetchAllOrders: () => Promise<Order[]>;
   cancelOrder: (orderId: string, reason: string) => Promise<{ error: string | null }>;
   fetchAllProfiles: () => Promise<AdminProfile[]>;
@@ -845,6 +866,26 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       });
   }, []);
 
+  // Kiosk home-screen layout (featured category tiles + popular items) —
+  // same public-read pattern as app_settings above.
+  useEffect(() => {
+    supabase
+      .from('kiosk_home_settings')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        dispatch({
+          type: 'SET_KIOSK_HOME_SETTINGS',
+          settings: {
+            featuredCategoryKeys: data.featured_category_keys ?? DEFAULT_KIOSK_HOME_SETTINGS.featuredCategoryKeys,
+            popularItemIds: data.popular_item_ids ?? [],
+          },
+        });
+      });
+  }, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
@@ -1011,6 +1052,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const { error } = await supabase.from('app_settings').update(payload).eq('id', 1);
         if (error) return { error: error.message };
         dispatch({ type: 'SET_APP_SETTINGS', settings: { ...state.appSettings, ...changes } });
+        return { error: null };
+      },
+      updateKioskHomeSettings: async (changes) => {
+        const payload: Record<string, unknown> = {};
+        if (changes.featuredCategoryKeys !== undefined) payload.featured_category_keys = changes.featuredCategoryKeys;
+        if (changes.popularItemIds !== undefined) payload.popular_item_ids = changes.popularItemIds;
+        const { error } = await supabase.from('kiosk_home_settings').update(payload).eq('id', 1);
+        if (error) return { error: error.message };
+        dispatch({ type: 'SET_KIOSK_HOME_SETTINGS', settings: { ...state.kioskHomeSettings, ...changes } });
         return { error: null };
       },
       fetchAllOrders: async () => {

@@ -8,6 +8,7 @@ import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View
 import { useLocalSearchParams } from 'expo-router';
 import Head from 'expo-router/head';
 import { fetchMenu, MenuItem } from '../data/menu';
+import { KIOSK_CATEGORIES, kioskCategoryKey, KioskCategory } from '../data/kioskCategories';
 import { lineUnitPrice, useStore } from '../context/StoreContext';
 import { colors, radii, shadow, spacing, typography } from '../constants/theme';
 import { formatPrice } from '../lib/format';
@@ -44,55 +45,19 @@ const CONFIRMATION_AUTO_RESET_MS = 15000;
 // dishes belong on it, not Planetary Eats' delivery-only bowls.
 const ZAMZAM_GROUP_ID = 'zam-zam-doner';
 
-// The shared `menu_items.category` column only has three values
-// (Bowls/Drinks/Desserts) because it's a platform-wide constraint used by
-// Planetary Eats' own dashboard math too — so every one of Zam Zam's 70+
-// dishes (döner, burgers, pasta, salads...) is stored under 'Bowls' and
-// would otherwise show up as one undifferentiated wall of food. This is a
-// kiosk-only, client-side re-bucketing (keyed off item id, since the real
-// category can't change) purely for a McDonald's-style vertical category
-// list — it has no effect on the admin dashboard or the regular site.
-interface KioskCategory {
-  key: string;
-  label: string;
-  emoji: string;
-  color: string;
-}
-
-const KIOSK_CATEGORIES: KioskCategory[] = [
-  { key: 'doner', label: 'Döner & Dürüm', emoji: '🥙', color: '#E8531F' },
-  { key: 'chicken', label: 'Chicken', emoji: '🍗', color: '#E0951A' },
-  { key: 'burgers', label: 'Burgers', emoji: '🍔', color: '#8B5A2B' },
-  { key: 'wings', label: 'Wings & Nuggets', emoji: '🍤', color: '#D6401F' },
-  { key: 'falafel', label: 'Falafel & Veggie', emoji: '🧆', color: '#6C9A34' },
-  { key: 'pasta', label: 'Pasta', emoji: '🍝', color: '#D9A62B' },
-  { key: 'salads', label: 'Salads', emoji: '🥗', color: '#3F9142' },
-  { key: 'sides', label: 'Sides & Extras', emoji: '🍟', color: '#D98E1E' },
-  { key: 'drinks', label: 'Drinks', emoji: '🥤', color: '#1F6FB2' },
-  { key: 'desserts', label: 'Desserts', emoji: '🍰', color: '#C22568' },
-];
-
-function kioskCategoryKey(item: MenuItem): string {
-  const id = item.id;
-  if (id.includes('insalata')) return 'salads';
-  if (id.includes('pasta')) return 'pasta';
-  if (id.includes('burger')) return 'burgers';
-  if (id.includes('wings') || id.includes('nuggets')) return 'wings';
-  if (id.includes('falafel')) return 'falafel';
-  if (id.includes('drehspiess')) return 'doner';
-  if (id.includes('schnitzel') || id.includes('haehnchen-menu') || id.includes('haehnchen') || id.includes('hahnchen')) return 'chicken';
-  if (item.category === 'Drinks') return 'drinks';
-  if (item.category === 'Desserts') return 'desserts';
-  return 'sides';
-}
+// A sentinel activeCategory value for the browse-everything landing panel
+// (admin-configurable featured tiles + popular items) — distinct from any
+// real KIOSK_CATEGORIES key.
+const HOME_KEY = 'home';
 
 export default function KioskScreen() {
   const params = useLocalSearchParams<{ confirmed?: string; orderId?: string }>();
-  const { cart, cartCount, cartSubtotal, updateQuantity, removeFromCart, clearCart, placeKioskOrder } = useStore();
+  const { cart, cartCount, cartSubtotal, updateQuantity, removeFromCart, clearCart, placeKioskOrder, kioskHomeSettings } =
+    useStore();
 
   const [screen, setScreen] = useState<KioskScreen>('idle');
   const [menuItems, setMenuItems] = useState<MenuItem[] | null>(null);
-  const [activeCategory, setActiveCategory] = useState<string>(KIOSK_CATEGORIES[0].key);
+  const [activeCategory, setActiveCategory] = useState<string>(HOME_KEY);
   const [customizeItem, setCustomizeItem] = useState<MenuItem | null>(null);
   const [placing, setPlacing] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -135,6 +100,7 @@ export default function KioskScreen() {
     if (screen === 'idle' || screen === 'confirmation') return;
     idleTimer.current = setTimeout(() => {
       clearCart();
+      setActiveCategory(HOME_KEY);
       setScreen('idle');
     }, IDLE_TIMEOUT_MS);
   };
@@ -159,6 +125,16 @@ export default function KioskScreen() {
   const startOrder = () => {
     clearCart();
     setOrderError(null);
+    setActiveCategory(HOME_KEY);
+    setScreen('menu');
+  };
+
+  // "Start Again" on the bottom bar — same reset as walking away and
+  // coming back, without waiting for the idle timeout.
+  const startOver = () => {
+    clearCart();
+    setOrderError(null);
+    setActiveCategory(HOME_KEY);
     setScreen('menu');
   };
 
@@ -233,12 +209,14 @@ export default function KioskScreen() {
       {screen === 'menu' && (
         <MenuScreen
           items={menuItems}
+          homeSettings={kioskHomeSettings}
           activeCategory={activeCategory}
           onCategoryChange={setActiveCategory}
           onSelectItem={setCustomizeItem}
           cartCount={cartCount}
           cartSubtotal={cartSubtotal}
           onViewCart={() => setScreen('cart')}
+          onStartOver={startOver}
         />
       )}
 
@@ -307,22 +285,47 @@ function IdleScreen({ onStart }: { onStart: () => void }) {
   );
 }
 
+function ItemCard({ item, accentColor, onPress }: { item: MenuItem; accentColor: string; onPress: () => void }) {
+  return (
+    <Pressable style={styles.gridCard} onPress={onPress}>
+      <View style={[styles.gridImageWrap, { backgroundColor: accentColor + '22' }]}>
+        {item.dishImage ? (
+          <Image source={item.dishImage} style={styles.gridImagePhoto} resizeMode="cover" />
+        ) : (
+          <Text style={styles.gridEmoji}>{item.emoji}</Text>
+        )}
+        <View style={styles.addBadge}>
+          <Text style={styles.addBadgeText}>+</Text>
+        </View>
+      </View>
+      <Text style={styles.gridName} numberOfLines={2}>
+        {item.name}
+      </Text>
+      <Text style={styles.gridPrice}>{formatPrice(item.price)}</Text>
+    </Pressable>
+  );
+}
+
 function MenuScreen({
   items,
+  homeSettings,
   activeCategory,
   onCategoryChange,
   onSelectItem,
   cartCount,
   cartSubtotal,
   onViewCart,
+  onStartOver,
 }: {
   items: MenuItem[] | null;
+  homeSettings: { featuredCategoryKeys: string[]; popularItemIds: string[] };
   activeCategory: string;
   onCategoryChange: (c: string) => void;
   onSelectItem: (item: MenuItem) => void;
   cartCount: number;
   cartSubtotal: number;
   onViewCart: () => void;
+  onStartOver: () => void;
 }) {
   if (!items) {
     return (
@@ -338,16 +341,35 @@ function MenuScreen({
     const key = kioskCategoryKey(item);
     (grouped[key] ??= []).push(item);
   });
+  const itemsById = new Map(zamzamItems.map((item) => [item.id, item]));
   const availableCategories = KIOSK_CATEGORIES.filter((c) => grouped[c.key]?.length);
-  const effectiveKey = grouped[activeCategory]?.length ? activeCategory : availableCategories[0]?.key;
+  const isHome = activeCategory === HOME_KEY;
+  const effectiveKey = isHome ? HOME_KEY : grouped[activeCategory]?.length ? activeCategory : availableCategories[0]?.key;
   const activeMeta = availableCategories.find((c) => c.key === effectiveKey);
-  const visible = effectiveKey ? grouped[effectiveKey] ?? [] : [];
+  const visible = effectiveKey && !isHome ? grouped[effectiveKey] ?? [] : [];
+
+  const featuredCategories = homeSettings.featuredCategoryKeys
+    .map((key) => availableCategories.find((c) => c.key === key))
+    .filter((c): c is KioskCategory => Boolean(c));
+  const popularItems = homeSettings.popularItemIds
+    .map((id) => itemsById.get(id))
+    .filter((item): item is MenuItem => Boolean(item));
 
   return (
     <View style={styles.menuLayout}>
       <ScrollView style={styles.sidebar} contentContainerStyle={styles.sidebarContent}>
+        <Pressable
+          style={[styles.sidebarItem, isHome && { backgroundColor: colors.forest + '17' }]}
+          onPress={() => onCategoryChange(HOME_KEY)}
+        >
+          <View style={[styles.sidebarIconWrap, { backgroundColor: colors.forest + (isHome ? '33' : '18') }]}>
+            <Text style={styles.sidebarEmoji}>🏠</Text>
+          </View>
+          <Text style={[styles.sidebarLabel, isHome && { color: colors.ink, fontWeight: '700' }]}>Home</Text>
+        </Pressable>
+
         {availableCategories.map((c) => {
-          const active = c.key === effectiveKey;
+          const active = c.key === effectiveKey && !isHome;
           return (
             <Pressable
               key={c.key}
@@ -366,36 +388,66 @@ function MenuScreen({
       </ScrollView>
 
       <View style={styles.mainPanel}>
-        {activeMeta && <Text style={styles.categoryHeading}>{activeMeta.label}</Text>}
-        <ScrollView contentContainerStyle={styles.grid}>
-          {visible.map((item) => (
-            <Pressable key={item.id} style={styles.gridCard} onPress={() => onSelectItem(item)}>
-              <View style={[styles.gridImageWrap, { backgroundColor: (activeMeta?.color ?? colors.forest) + '22' }]}>
-                {item.dishImage ? (
-                  <Image source={item.dishImage} style={styles.gridImagePhoto} resizeMode="cover" />
-                ) : (
-                  <Text style={styles.gridEmoji}>{item.emoji}</Text>
-                )}
-                <View style={styles.addBadge}>
-                  <Text style={styles.addBadgeText}>+</Text>
+        {isHome ? (
+          <ScrollView contentContainerStyle={styles.homeContent}>
+            {featuredCategories.length > 0 && (
+              <View style={styles.homeSection}>
+                <Text style={styles.homeSectionTitle}>Discover our menu</Text>
+                <View style={styles.tileGrid}>
+                  {featuredCategories.map((c) => (
+                    <Pressable
+                      key={c.key}
+                      style={[styles.tile, { backgroundColor: c.color + '17' }]}
+                      onPress={() => onCategoryChange(c.key)}
+                    >
+                      <Text style={styles.tileEmoji}>{c.emoji}</Text>
+                      <Text style={styles.tileLabel}>{c.label}</Text>
+                    </Pressable>
+                  ))}
                 </View>
               </View>
-              <Text style={styles.gridName} numberOfLines={2}>
-                {item.name}
-              </Text>
-              <Text style={styles.gridPrice}>{formatPrice(item.price)}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+            )}
+
+            {popularItems.length > 0 && (
+              <View style={styles.homeSection}>
+                <Text style={styles.homeSectionTitle}>Popular Choices</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.popularRow}>
+                    {popularItems.map((item) => (
+                      <ItemCard key={item.id} item={item} accentColor={colors.forest} onPress={() => onSelectItem(item)} />
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+            )}
+          </ScrollView>
+        ) : (
+          <>
+            {activeMeta && <Text style={styles.categoryHeading}>{activeMeta.label}</Text>}
+            <ScrollView contentContainerStyle={styles.grid}>
+              {visible.map((item) => (
+                <ItemCard key={item.id} item={item} accentColor={activeMeta?.color ?? colors.forest} onPress={() => onSelectItem(item)} />
+              ))}
+            </ScrollView>
+          </>
+        )}
       </View>
 
-      {cartCount > 0 && (
-        <Pressable style={styles.cartBar} onPress={onViewCart}>
-          <Text style={styles.cartBarText}>
-            View order ({cartCount}) · {formatPrice(cartSubtotal)}
+      <View style={styles.bottomBar}>
+        <Text style={styles.bottomBarTotal}>{cartCount > 0 ? formatPrice(cartSubtotal) : '—'}</Text>
+        <Pressable style={styles.bottomBarSecondary} onPress={onStartOver}>
+          <Text style={styles.bottomBarSecondaryText}>Start Again</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.bottomBarPrimary, cartCount === 0 && styles.bottomBarPrimaryDisabled]}
+          onPress={onViewCart}
+          disabled={cartCount === 0}
+        >
+          <Text style={styles.bottomBarPrimaryText}>
+            {cartCount > 0 ? `View My Order (${cartCount})` : 'View My Order'}
           </Text>
         </Pressable>
-      )}
+      </View>
     </View>
   );
 }
@@ -807,21 +859,92 @@ const styles = StyleSheet.create({
     color: colors.forest,
     marginTop: spacing.xs,
   },
-  cartBar: {
-    position: 'absolute',
-    bottom: spacing.lg,
-    left: spacing.lg,
-    right: spacing.lg,
-    backgroundColor: colors.forest,
-    borderRadius: radii.pill,
-    paddingVertical: spacing.md,
+  homeContent: {
+    padding: spacing.lg,
+    paddingBottom: 120,
+  },
+  homeSection: {
+    marginBottom: spacing.xl,
+  },
+  homeSectionTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.ink,
+    marginBottom: spacing.md,
+  },
+  tileGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  tile: {
+    width: 260,
+    height: 100,
+    borderRadius: radii.lg,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  tileEmoji: {
+    fontSize: 34,
+  },
+  tileLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  popularRow: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+  },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.cream,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
     ...shadow.card,
   },
-  cartBarText: {
+  bottomBarTotal: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+    minWidth: 80,
+  },
+  bottomBarSecondary: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  bottomBarSecondaryText: {
+    color: colors.ink,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  bottomBarPrimary: {
+    flex: 1,
+    backgroundColor: colors.forest,
+    borderRadius: radii.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+  },
+  bottomBarPrimaryDisabled: {
+    opacity: 0.4,
+  },
+  bottomBarPrimaryText: {
     color: colors.white,
     fontWeight: '700',
-    fontSize: 18,
+    fontSize: 16,
   },
   cartLine: {
     flexDirection: 'row',
