@@ -42,10 +42,6 @@ export default function MenuScreen() {
         <Explorer items={bowls} onSelect={(item) => router.push(`/item/${item.id}`)} />
       </ScrollView>
 
-      <Pressable style={styles.dealBanner} onPress={() => router.push('/(tabs)/cart')}>
-        <Text style={styles.dealText}>🎉 Deal of the month — 10% off with code WORLD10 at checkout</Text>
-      </Pressable>
-
       <Pressable style={styles.spinButton} onPress={() => setSpinVisible(true)}>
         <Ionicons name="shuffle-outline" size={20} color={colors.forest} />
       </Pressable>
@@ -86,23 +82,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  dealBanner: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    right: 72,
-    backgroundColor: 'rgba(0,0,0,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.2)',
-    borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  dealText: {
-    color: colors.ink,
-    fontSize: 12,
-    fontWeight: '600',
   },
   spinButton: {
     position: 'absolute',

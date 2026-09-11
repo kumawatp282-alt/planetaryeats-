@@ -343,8 +343,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         minHeight: '100%',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingTop: spacing.lg,
-        paddingBottom: spacing.lg,
+        paddingTop: activeBowlId ? spacing.sm : spacing.lg,
+        paddingBottom: activeBowlId ? spacing.sm : spacing.lg,
         backgroundColor: colors.cream,
         overflow: activeBowlId ? 'visible' : 'hidden',
         position: 'relative',
@@ -388,13 +388,20 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         />
       ))}
 
-      <Image
-        source={logoImage}
-        style={styles.brandLogo}
-        resizeMode="contain"
-        accessibilityLabel="Planetary Eats"
-      />
-      <Text style={styles.tagline}>Explore the World, One Bowl at a Time.</Text>
+      {/* Hidden while a bowl is open — that vertical space goes to the
+          bento card instead, which is what "fit everything on one screen,
+          no scrolling" actually needs. */}
+      {!activeBowlId && (
+        <>
+          <Image
+            source={logoImage}
+            style={styles.brandLogo}
+            resizeMode="contain"
+            accessibilityLabel="Planetary Eats"
+          />
+          <Text style={styles.tagline}>Good for you. Good for the planet.</Text>
+        </>
+      )}
 
       {/* Everything below is confined to the globe's own footprint — the
           bowl pop-out replaces just this area, not the whole screen. */}
