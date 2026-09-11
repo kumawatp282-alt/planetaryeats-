@@ -9,6 +9,7 @@ import { Asset } from 'expo-asset';
 import { MenuItem } from '../data/menu';
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import BowlPopModal from './BowlPopModal';
+import DishBentoModal from './DishBentoModal';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const earthTextureModule = require('../assets/earth.jpg');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -94,6 +95,7 @@ function useTwinkleKeyframes() {
 export default function GlobeExplorer({ items, onSelect }: Props) {
   const [globeSize, setGlobeSize] = useState(320);
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
+  const [bentoItem, setBentoItem] = useState<MenuItem | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const markerRefs = useRef<Record<string, View | null>>({});
   // Cursor-hover zoom on pins — read/written every frame in the imperative
@@ -506,7 +508,15 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           activeId={activeBowlId}
           size={globeSize}
           onClose={() => setActiveBowlId(null)}
-          onViewBowl={(item) => {
+          onViewBowl={(item) => setBentoItem(item)}
+        />
+
+        <DishBentoModal
+          item={bentoItem}
+          maxSize={globeSize}
+          onClose={() => setBentoItem(null)}
+          onViewFullPage={(item) => {
+            setBentoItem(null);
             setActiveBowlId(null);
             onSelect(item);
           }}
