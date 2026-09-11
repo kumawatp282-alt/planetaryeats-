@@ -1,14 +1,41 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useStore } from '../../context/StoreContext';
+import { Order, todayIso, useStore } from '../../context/StoreContext';
 import OrderStatusBadge from '../../components/OrderStatusBadge';
 import { colors, radii, shadow, spacing, typography } from '../../constants/theme';
 import { formatPrice } from '../../lib/format';
 
 export default function OrdersScreen() {
-  const { orders, advanceOrderStatus } = useStore();
+  const { orders, advanceOrderStatus, addNutritionEntry } = useStore();
   const router = useRouter();
+  const [loggedIds, setLoggedIds] = useState<Set<string>>(new Set());
+  const [loggingId, setLoggingId] = useState<string | null>(null);
+
+  // Today's own orders already count automatically toward the daily
+  // nutrition total (useTodayNutrition sums today's orders directly) —
+  // this button is for re-logging a PAST order as something eaten today,
+  // so it only appears for orders from an earlier day, and only when the
+  // order actually has nutrition data to log.
+  const logOrderNutrition = async (order: Order) => {
+    setLoggingId(order.id);
+    const totals = order.lines.reduce(
+      (acc, line) => {
+        const n = line.item.nutrition;
+        if (!n) return acc;
+        return {
+          calories: acc.calories + n.calories * line.quantity,
+          protein: acc.protein + n.protein * line.quantity,
+          fiber: acc.fiber + n.fiber * line.quantity,
+        };
+      },
+      { calories: 0, protein: 0, fiber: 0 }
+    );
+    const label = order.lines.map((l) => l.item.name).join(', ');
+    const { error } = await addNutritionEntry(todayIso(), { label, ...totals });
+    setLoggingId(null);
+    if (!error) setLoggedIds((prev) => new Set(prev).add(order.id));
+  };
 
   if (orders.length === 0) {
     return (
@@ -45,6 +72,22 @@ export default function OrdersScreen() {
             <Pressable style={styles.advanceButton} onPress={() => router.push(`/receipt/${order.id}`)}>
               <Text style={styles.advanceText}>Receipt</Text>
             </Pressable>
+            {new Date(order.placedAt).toDateString() !== new Date().toDateString() &&
+              order.lines.some((l) => l.item.nutrition) && (
+                <Pressable
+                  style={styles.advanceButton}
+                  onPress={() => logOrderNutrition(order)}
+                  disabled={loggedIds.has(order.id) || loggingId === order.id}
+                >
+                  <Text style={styles.advanceText}>
+                    {loggedIds.has(order.id)
+                      ? 'Logged to today ✓'
+                      : loggingId === order.id
+                      ? 'Logging…'
+                      : 'Add to My Daily Log'}
+                  </Text>
+                </Pressable>
+              )}
           </View>
         </View>
       )}

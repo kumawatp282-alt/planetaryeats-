@@ -17,7 +17,16 @@ const logoImage = require('../assets/planetary-eats-logo.png');
 interface Props {
   items: MenuItem[]; // must have `origin` set
   onSelect: (item: MenuItem) => void;
+  activeFilter?: string;
+  onFilterChange?: (filter: any) => void;
 }
+
+const NUTRITION_FILTERS: { key: string; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'high-protein', label: 'High Protein' },
+  { key: 'lower-carb', label: 'Lower Carb' },
+  { key: 'vegetarian', label: 'Vegetarian' },
+];
 
 const SPHERE_RADIUS = 1.3;
 const CAMERA_Z = 3.2;
@@ -91,7 +100,7 @@ function useTwinkleKeyframes() {
   }, []);
 }
 
-export default function GlobeExplorer({ items, onSelect }: Props) {
+export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterChange }: Props) {
   const [globeSize, setGlobeSize] = useState(320);
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -400,6 +409,22 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
             accessibilityLabel="Planetary Eats"
           />
           <Text style={styles.tagline}>Good for you. Good for the planet.</Text>
+          {onFilterChange && (
+            <View style={styles.filterRow}>
+              {NUTRITION_FILTERS.map((f) => {
+                const active = (activeFilter ?? 'all') === f.key;
+                return (
+                  <Pressable
+                    key={f.key}
+                    style={[styles.filterChip, active && styles.filterChipActive]}
+                    onPress={() => onFilterChange(f.key)}
+                  >
+                    <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{f.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
         </>
       )}
 
@@ -542,6 +567,36 @@ const styles = {
     marginTop: 2,
     marginBottom: spacing.md,
     fontFamily: fonts.body,
+  },
+  filterRow: {
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    gap: spacing.xs,
+    justifyContent: 'center' as const,
+    marginTop: -spacing.sm,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  filterChip: {
+    paddingVertical: 6,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  filterChipActive: {
+    backgroundColor: colors.forest,
+    borderColor: colors.forest,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    color: colors.inkMuted,
+    fontFamily: fonts.body,
+  },
+  filterChipTextActive: {
+    color: colors.white,
   },
   hint: {
     marginTop: spacing.sm,
