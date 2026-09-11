@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import GlobeExplorer from '../../components/GlobeExplorer';
@@ -34,7 +34,13 @@ export default function MenuScreen() {
 
   return (
     <View style={styles.screen}>
-      <Explorer items={bowls} onSelect={(item) => router.push(`/item/${item.id}`)} />
+      {/* A tapped globe pin can grow much taller than one viewport (photo +
+          fact cards + customize controls) — this has to scroll internally
+          rather than being clipped, while the header icons below stay
+          fixed on top of it (outside the ScrollView) exactly as before. */}
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+        <Explorer items={bowls} onSelect={(item) => router.push(`/item/${item.id}`)} />
+      </ScrollView>
 
       <Pressable style={styles.dealBanner} onPress={() => router.push('/(tabs)/cart')}>
         <Text style={styles.dealText}>🎉 Deal of the month — 10% off with code WORLD10 at checkout</Text>

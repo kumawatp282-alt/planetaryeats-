@@ -334,13 +334,19 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     <View
       style={{
         width: '100%',
-        height: '100%',
+        // A tapped pin's popup (photo + fact cards + customize controls)
+        // can be much taller than the globe's own hero-section footprint —
+        // let the container grow to fit it (and stop clipping it) rather
+        // than forcing everything into one fixed height. Normal globe
+        // browsing still gets the clean fixed-height/clipped hero look.
+        height: activeBowlId ? undefined : '100%',
+        minHeight: '100%',
         alignItems: 'center',
         justifyContent: 'center',
         paddingTop: spacing.lg,
         paddingBottom: spacing.lg,
         backgroundColor: colors.cream,
-        overflow: 'hidden',
+        overflow: activeBowlId ? 'visible' : 'hidden',
         position: 'relative',
       }}
     >

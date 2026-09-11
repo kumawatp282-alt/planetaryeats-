@@ -340,8 +340,15 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
   // proportionally to a 480px photo would blow the ring far past the
   // viewport. Clamped so the ring never gets illegibly tiny either.
   const cardSize = Math.max(64, Math.min(112, windowWidth * 0.09));
-  const radiusPad = Math.max(10, Math.min(26, windowWidth * 0.02));
-  const radius = size / 2 + radiusPad + cardSize / 2;
+  // Cards are axis-aligned squares, not rotated to face outward, so at
+  // several of the N angles around the circle a card's CORNER — not its
+  // edge — is what's nearest the photo. That corner sits sqrt(2)*halfWidth
+  // closer to the center than the card's own midpoint distance would
+  // suggest; a radius that only adds cardSize/2 (as if the card always
+  // presented its edge) lets those corners clip the photo. Accounting for
+  // the true corner distance guarantees clearance at every angle.
+  const gap = 20;
+  const radius = size / 2 + gap + (cardSize / 2) * Math.SQRT2;
   const stageSize = radius * 2 + cardSize;
   const fontScale = Math.max(0.65, Math.min(1, Math.min(windowWidth, windowHeight) / 700));
 
