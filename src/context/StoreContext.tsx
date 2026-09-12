@@ -4,7 +4,7 @@
 // user; placing one requires being logged in (enforced in checkout.tsx).
 
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useState } from 'react';
-import { AddOn, MenuItem, Nutrition, Origin, rowToMenuItem } from '../data/menu';
+import { AddOn, Fact, MenuItem, Nutrition, Origin, rowToMenuItem } from '../data/menu';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
 import {
@@ -275,6 +275,7 @@ export interface MenuItemInput {
   nutrition: Nutrition | null;
   groupId: string | null;
   groupLabel: string | null;
+  facts: Fact[] | null;
   isActive: boolean;
   sortOrder: number;
 }
@@ -793,6 +794,7 @@ function menuItemInputToRow(input: MenuItemInput) {
     nutrition: input.nutrition,
     group_id: input.groupId,
     group_label: input.groupLabel,
+    facts: input.facts,
     is_active: input.isActive,
     sort_order: input.sortOrder,
   };

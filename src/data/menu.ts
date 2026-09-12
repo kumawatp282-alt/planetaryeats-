@@ -36,6 +36,15 @@ export interface Nutrition {
   fat: number; // g
 }
 
+// An admin-added extra tile on the dish's bento card (BowlPopModal), beyond
+// the built-in Origin/About/Nutrition tiles — e.g. "Chef's tip" or
+// "Pairs well with". Order in the array is display order; reordered from
+// the admin dish editor.
+export interface Fact {
+  label: string;
+  body: string;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
@@ -53,6 +62,7 @@ export interface MenuItem {
   nutrition?: Nutrition; // PLACEHOLDER-CHECK: estimated, not lab-verified — swap for real values when available
   groupId?: string; // items served from the same outside stop — only the one with `origin` gets a globe pin; the rest are offered as choices inside that pin's pop-out
   groupLabel?: string; // shown above the choices, e.g. "Chili Döner Freising"
+  facts?: Fact[]; // admin-added extra tiles on the bento card, beyond the built-in ones
 }
 
 export const categories: Category[] = ['Bowls', 'Drinks', 'Desserts'];
@@ -75,6 +85,7 @@ export function rowToMenuItem(row: any): MenuItem {
     nutrition: row.nutrition ?? undefined,
     groupId: row.group_id ?? undefined,
     groupLabel: row.group_label ?? undefined,
+    facts: Array.isArray(row.facts) && row.facts.length > 0 ? row.facts : undefined,
   };
 }
 

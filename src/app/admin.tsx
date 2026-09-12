@@ -1487,6 +1487,7 @@ function RecipesSection() {
       nutrition: computedNutrition,
       groupId: selectedItem.groupId ?? null,
       groupLabel: selectedItem.groupLabel ?? null,
+      facts: selectedItem.facts ?? null,
       isActive: selectedItem.isActive,
       sortOrder: selectedItem.sortOrder,
     });

@@ -1,14 +1,15 @@
-// Tapping a bowl's photo pin on the globe pops this up: a bento-grid card
-// — photo, real facts (calories, protein, origin story, tags/allergens),
-// a couple of empty placeholder tiles for whatever gets added next, a
-// quick protein choice, and Add to cart — all sized to fit in one screen
-// with no scrolling, in place of the globe itself (not a full-screen
-// takeover). Swipe left/right — by drag or trackpad — on the photo to
-// browse other bowls; tap it (or "View full page") to open the full item
-// page; tap the X to dismiss back to the globe.
+// Tapping a bowl's photo pin on the globe pops this up: a cluster of
+// circular tiles — a big photo circle plus real facts (calories, protein,
+// origin story, tags/allergens, and any admin-added extra tiles), a quick
+// protein choice, and Add to cart — all in place of the globe itself (not
+// a full-screen takeover). Swipe left/right — by drag or trackpad — on the
+// photo to browse other bowls; tap it (or "View full page") to open the
+// full item page; tap the X to dismiss back to the globe.
 //
 // Every fact comes straight from the same MenuItem data used elsewhere
-// (data/menu.ts) — nothing invented per dish.
+// (data/menu.ts) — the built-in tiles are edited from the admin panel's
+// dish editor, and `item.facts` is a free-form list of extra tiles an
+// admin can add/reorder/remove there too.
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -40,27 +41,25 @@ const TAP_THRESHOLD = 8;
 const WHEEL_SWIPE_THRESHOLD = 40;
 const WHEEL_LOCK_MS = 450;
 
-// A tile's own flex share of its column's height, so the grid always adds
-// up the same way regardless of which optional tiles a given dish has.
-const TILE_COUNT = 9; // origin, about, emptyA, photo, goodToKnow, calories, protein, macros, emptyB
-
 function TileFade({
   index,
+  total,
   anim,
   style,
   children,
 }: {
   index: number;
+  total: number;
   anim: Animated.Value;
   style?: any;
   children: React.ReactNode;
 }) {
-  const start = Math.min(0.75, (index / TILE_COUNT) * 0.8);
+  const start = Math.min(0.75, (index / Math.max(1, total)) * 0.8);
   const end = Math.min(1, start + 0.35);
   const opacity = anim.interpolate({ inputRange: [start, end], outputRange: [0, 1], extrapolate: 'clamp' });
-  const translateY = anim.interpolate({ inputRange: [start, end], outputRange: [14, 0], extrapolate: 'clamp' });
+  const scale = anim.interpolate({ inputRange: [start, end], outputRange: [0.8, 1], extrapolate: 'clamp' });
   return (
-    <Animated.View style={[style, { opacity, transform: [{ translateY }] }]}>
+    <Animated.View style={[style, { opacity, transform: [{ scale }] }]}>
       {children}
     </Animated.View>
   );
@@ -69,7 +68,7 @@ function TileFade({
 export default function BowlPopModal({ items, allItems, activeId, size, onClose, onViewBowl }: Props) {
   const { remainingCalories } = useTodayNutrition();
   const { addToCart } = useStore();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const [siblingId, setSiblingId] = useState<string | null>(null);
   const [selectedProtein, setSelectedProtein] = useState<string | undefined>(undefined);
@@ -198,17 +197,114 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
     setJustAdded(true);
   };
 
-  // The grid is budgeted against the real viewport so the whole card fits
-  // in one screen without scrolling on a typical laptop/desktop window —
-  // clamped so it's never absurdly short (tiny window) or tall (huge one).
-  const gridHeight = Math.max(280, Math.min(480, windowHeight - 380));
-  const blockWidth = Math.min(windowWidth * 0.92, 720);
+  // A cluster of same-shape circles, wrapping to fit whatever width is
+  // available — no fixed grid to overflow or leave gaps in. Sized down a
+  // notch on narrow windows so the cluster still wraps into a tidy shape
+  // rather than one long column.
+  const isNarrow = windowWidth < 560;
+  const blockWidth = Math.min(windowWidth * 0.94, 760);
+  const photoSize = isNarrow ? 168 : 210;
+  const factSize = isNarrow ? 104 : 128;
+  const clusterGap = isNarrow ? spacing.md : spacing.lg;
 
   const goodToKnow = [...(item.tags ?? []), ...(item.allergens ?? [])];
   const photoScale = cardsAnim.interpolate({ inputRange: [0, 0.3], outputRange: [0.94, 1], extrapolate: 'clamp' });
   const photoOpacity = cardsAnim.interpolate({ inputRange: [0, 0.25], outputRange: [0, 1], extrapolate: 'clamp' });
 
-  let t = 0; // running tile index, for the stagger
+  // Built-in fact tiles only appear when the dish actually has that data —
+  // no empty placeholder circles. `item.facts` (admin-added, from the
+  // dish editor's "Extra info tiles" section) are appended after them, in
+  // the order the admin arranged them.
+  const tiles: { key: string; dark?: boolean; content: React.ReactNode }[] = [];
+  if (item.origin) {
+    tiles.push({
+      key: 'origin',
+      dark: true,
+      content: (
+        <>
+          <Text style={styles.originFlag}>{item.origin.flag}</Text>
+          <Text style={styles.originCountry}>{item.origin.country}</Text>
+          <Text style={styles.originHistory} numberOfLines={3}>
+            {item.origin.history}
+          </Text>
+        </>
+      ),
+    });
+  }
+  tiles.push({
+    key: 'about',
+    content: (
+      <>
+        <Text style={styles.tileLabel}>ABOUT</Text>
+        <Text style={styles.tileBody} numberOfLines={4}>
+          {item.description}
+        </Text>
+      </>
+    ),
+  });
+  if (goodToKnow.length > 0) {
+    tiles.push({
+      key: 'good-to-know',
+      content: (
+        <>
+          <Text style={styles.tileLabel}>GOOD TO KNOW</Text>
+          <View style={styles.tagWrap}>
+            {goodToKnow.slice(0, 3).map((tag) => (
+              <View key={tag} style={styles.tagPill}>
+                <Text style={styles.tagPillText}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      ),
+    });
+  }
+  if (item.nutrition) {
+    tiles.push({
+      key: 'calories',
+      content: (
+        <>
+          <Text style={styles.statValue}>{item.nutrition.calories}</Text>
+          <Text style={styles.tileLabel}>KCAL</Text>
+        </>
+      ),
+    });
+    tiles.push({
+      key: 'protein',
+      content: (
+        <>
+          <Text style={styles.statValue}>{item.nutrition.protein}g</Text>
+          <Text style={styles.tileLabel}>PROTEIN</Text>
+        </>
+      ),
+    });
+    tiles.push({
+      key: 'macros',
+      content: (
+        <>
+          <Text style={styles.tileLabel}>PER SERVING</Text>
+          <Text style={styles.macroLine}>{item.nutrition.carbs}g carbs</Text>
+          <Text style={styles.macroLine}>{item.nutrition.fiber}g fiber</Text>
+          <Text style={styles.macroLine}>{item.nutrition.fat}g fat</Text>
+        </>
+      ),
+    });
+  }
+  (item.facts ?? []).forEach((fact, i) => {
+    tiles.push({
+      key: `fact-${i}`,
+      content: (
+        <>
+          <Text style={styles.tileLabel} numberOfLines={2}>
+            {fact.label.toUpperCase()}
+          </Text>
+          <Text style={styles.tileBody} numberOfLines={4}>
+            {fact.body}
+          </Text>
+        </>
+      ),
+    });
+  });
 
   return (
     <View
@@ -224,104 +320,46 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
         <Text style={styles.name}>{item.name}</Text>
         <Text style={styles.price}>{formatPrice(unitPrice)}</Text>
 
-        <View style={[styles.grid, { height: gridHeight }]}>
-          <View style={styles.column}>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, styles.tileDark, { flex: 1.3 }]}>
-              {item.origin ? (
-                <>
-                  <Text style={styles.originFlag}>{item.origin.flag}</Text>
-                  <Text style={styles.originCountry}>{item.origin.country}</Text>
-                  <Text style={styles.originHistory} numberOfLines={6}>
-                    {item.origin.history}
-                  </Text>
-                </>
-              ) : (
-                <Text style={styles.tileLabelDark}>ORIGIN</Text>
-              )}
-            </TileFade>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, { flex: 1 }]}>
-              <Text style={styles.tileLabel}>ABOUT THIS DISH</Text>
-              <Text style={styles.tileBody} numberOfLines={5}>
-                {item.description}
-              </Text>
-            </TileFade>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, styles.tileEmpty, { flex: 0.8 }]}>
-              <Text style={styles.emptyPlus}>+</Text>
-              <Text style={styles.emptyLabel}>Add info</Text>
-            </TileFade>
-          </View>
+        <View style={[styles.cluster, { gap: clusterGap, marginTop: spacing.lg }]}>
+          <Animated.View
+            {...panResponder.panHandlers}
+            style={[
+              styles.circle,
+              styles.photoCircle,
+              {
+                width: photoSize,
+                height: photoSize,
+                borderRadius: photoSize / 2,
+                opacity: photoOpacity,
+                transform: [{ translateX }, { scale: photoScale }],
+                cursor: 'pointer',
+              } as any,
+            ]}
+          >
+            {item.dishImage ? (
+              <Image source={item.dishImage} style={styles.photoImage} resizeMode="cover" />
+            ) : (
+              <View style={[styles.photoImage, styles.photoEmoji]}>
+                <Text style={{ fontSize: 56 }}>{item.emoji}</Text>
+              </View>
+            )}
+          </Animated.View>
 
-          <View style={[styles.column, { flex: 1.3 }]}>
-            <Animated.View
-              {...panResponder.panHandlers}
+          {tiles.map((tile, i) => (
+            <TileFade
+              key={tile.key}
+              index={i}
+              total={tiles.length}
+              anim={cardsAnim}
               style={[
-                styles.tile,
-                styles.photoTile,
-                { flex: 2.2, opacity: photoOpacity, transform: [{ translateX }, { scale: photoScale }], cursor: 'pointer' } as any,
+                styles.circle,
+                tile.dark && styles.circleDark,
+                { width: factSize, height: factSize, borderRadius: factSize / 2 },
               ]}
             >
-              {item.dishImage ? (
-                <Image source={item.dishImage} style={styles.photoImage} resizeMode="cover" />
-              ) : (
-                <View style={[styles.photoImage, styles.photoEmoji]}>
-                  <Text style={{ fontSize: 64 }}>{item.emoji}</Text>
-                </View>
-              )}
-            </Animated.View>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, { flex: 0.8 }]}>
-              <Text style={styles.tileLabel}>GOOD TO KNOW</Text>
-              {goodToKnow.length > 0 ? (
-                <View style={styles.tagWrap}>
-                  {goodToKnow.slice(0, 4).map((tag) => (
-                    <View key={tag} style={styles.tagPill}>
-                      <Text style={styles.tagPillText}>{tag}</Text>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <Text style={styles.tileBody}>—</Text>
-              )}
+              {tile.content}
             </TileFade>
-          </View>
-
-          <View style={styles.column}>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, { flex: 1 }]}>
-              {item.nutrition ? (
-                <>
-                  <Text style={styles.statValue}>{item.nutrition.calories}</Text>
-                  <Text style={styles.tileLabel}>KCAL</Text>
-                </>
-              ) : (
-                <Text style={styles.tileLabel}>KCAL</Text>
-              )}
-            </TileFade>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, { flex: 1 }]}>
-              {item.nutrition ? (
-                <>
-                  <Text style={styles.statValue}>{item.nutrition.protein}g</Text>
-                  <Text style={styles.tileLabel}>PROTEIN</Text>
-                </>
-              ) : (
-                <Text style={styles.tileLabel}>PROTEIN</Text>
-              )}
-            </TileFade>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, { flex: 1 }]}>
-              <Text style={styles.tileLabel}>PER SERVING</Text>
-              {item.nutrition ? (
-                <>
-                  <Text style={styles.macroLine}>{item.nutrition.carbs}g carbs</Text>
-                  <Text style={styles.macroLine}>{item.nutrition.fiber}g fiber</Text>
-                  <Text style={styles.macroLine}>{item.nutrition.fat}g fat</Text>
-                </>
-              ) : (
-                <Text style={styles.tileBody}>—</Text>
-              )}
-            </TileFade>
-            <TileFade index={t++} anim={cardsAnim} style={[styles.tile, styles.tileEmpty, { flex: 0.8 }]}>
-              <Text style={styles.emptyPlus}>+</Text>
-              <Text style={styles.emptyLabel}>Add info</Text>
-            </TileFade>
-          </View>
+          ))}
         </View>
 
         {item.proteinOptions && item.proteinOptions.length > 0 && (
@@ -405,9 +443,9 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
 
 const styles = StyleSheet.create({
   block: {
-    maxWidth: 720,
+    maxWidth: 760,
     paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    paddingBottom: spacing.md,
     paddingHorizontal: spacing.md,
   },
   closeButton: {
@@ -442,49 +480,28 @@ const styles = StyleSheet.create({
     color: colors.clay,
     textAlign: 'center',
   },
-  grid: {
+  cluster: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  column: {
-    flex: 1,
-    gap: spacing.sm,
-  },
-  tile: {
-    flex: 1,
-    borderRadius: radii.lg,
+  circle: {
+    borderRadius: 999,
     backgroundColor: colors.card,
-    padding: spacing.sm,
+    padding: spacing.sm + 4,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     ...shadow.card,
   },
-  tileDark: {
+  circleDark: {
     backgroundColor: colors.forest,
   },
-  tileEmpty: {
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  emptyPlus: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.border,
-  },
-  emptyLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.border,
-    marginTop: 2,
-  },
-  photoTile: {
+  photoCircle: {
     padding: 0,
+    borderWidth: 3,
+    borderColor: colors.card,
   },
   photoImage: {
     width: '100%',
@@ -496,56 +513,50 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   tileLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: colors.inkMuted,
     letterSpacing: 0.5,
     textAlign: 'center',
-    marginBottom: 4,
-  },
-  tileLabelDark: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.7)',
-    letterSpacing: 0.5,
-    textAlign: 'center',
+    marginBottom: 3,
   },
   tileBody: {
-    fontSize: 11,
+    fontSize: 10,
     color: colors.ink,
     textAlign: 'center',
-    lineHeight: 14,
+    lineHeight: 13,
   },
   statValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
     color: colors.ink,
   },
   macroLine: {
-    fontSize: 10,
+    fontSize: 9,
     color: colors.ink,
     textAlign: 'center',
+    lineHeight: 12,
   },
   originFlag: {
-    fontSize: 24,
+    fontSize: 20,
     marginBottom: 2,
   },
   originCountry: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: colors.white,
-    marginBottom: 4,
+    marginBottom: 3,
   },
   originHistory: {
-    fontSize: 9,
-    lineHeight: 12,
+    fontSize: 8,
+    lineHeight: 11,
     color: 'rgba(255,255,255,0.85)',
     textAlign: 'center',
   },
   tagWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: 3,
     justifyContent: 'center',
   },
   tagPill: {
@@ -557,7 +568,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   tagPillText: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '600',
     color: colors.ink,
   },

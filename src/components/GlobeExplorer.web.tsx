@@ -307,12 +307,21 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         // let the container grow to fit it (and stop clipping it) rather
         // than forcing everything into one fixed height. Normal globe
         // browsing still gets the clean fixed-height/clipped hero look.
+        //
+        // The bowl card itself is absolutely positioned (see BowlPopModal)
+        // so it never contributes to this container's own flow height —
+        // centering it with justifyContent:'center' was centering against
+        // the (mostly invisible) globe canvas box instead, which left a
+        // tall empty gap above the card and crammed it toward the bottom
+        // on any window where the card was taller than the canvas. Flowing
+        // from the top avoids that entirely: the card just starts right
+        // below the header and uses its own real height.
         height: activeBowlId ? undefined : '100%',
         minHeight: '100%',
         alignItems: 'center',
-        justifyContent: 'center',
-        paddingTop: activeBowlId ? spacing.sm : spacing.lg,
-        paddingBottom: activeBowlId ? spacing.sm : spacing.lg,
+        justifyContent: activeBowlId ? 'flex-start' : 'center',
+        paddingTop: activeBowlId ? spacing.xl : spacing.lg,
+        paddingBottom: activeBowlId ? spacing.lg : spacing.lg,
         backgroundColor: colors.cream,
         overflow: activeBowlId ? 'visible' : 'hidden',
         position: 'relative',

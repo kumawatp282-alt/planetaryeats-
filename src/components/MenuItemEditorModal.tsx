@@ -6,7 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AdminMenuItem, MenuItemInput, useStore } from '../context/StoreContext';
-import { AddOn, Category } from '../data/menu';
+import { AddOn, Category, Fact } from '../data/menu';
 import { colors, radii, spacing, typography } from '../constants/theme';
 
 interface Props {
@@ -109,6 +109,7 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved, d
 
   const [groupId, setGroupId] = useState('');
   const [groupLabel, setGroupLabel] = useState('');
+  const [facts, setFacts] = useState<Fact[]>([]);
   const [isActive, setIsActive] = useState(true);
 
   const [saving, setSaving] = useState(false);
@@ -146,6 +147,7 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved, d
       setFat(item.nutrition ? String(item.nutrition.fat) : '');
       setGroupId(item.groupId ?? '');
       setGroupLabel(item.groupLabel ?? '');
+      setFacts(item.facts ?? []);
       setIsActive(item.isActive);
     } else {
       setId('');
@@ -176,9 +178,22 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved, d
       setFat('');
       setGroupId(defaultGroup?.id ?? '');
       setGroupLabel(defaultGroup?.label ?? '');
+      setFacts([]);
       setIsActive(true);
     }
   }, [visible, item]);
+
+  const addFact = () => setFacts([...facts, { label: '', body: '' }]);
+  const updateFact = (i: number, patch: Partial<Fact>) =>
+    setFacts(facts.map((f, fi) => (fi === i ? { ...f, ...patch } : f)));
+  const removeFact = (i: number) => setFacts(facts.filter((_, fi) => fi !== i));
+  const moveFact = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= facts.length) return;
+    const next = [...facts];
+    [next[i], next[j]] = [next[j], next[i]];
+    setFacts(next);
+  };
 
   const addAddOn = () => {
     const trimmedName = newAddOnName.trim();
@@ -250,6 +265,12 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved, d
         : null,
       groupId: groupId.trim() || null,
       groupLabel: groupLabel.trim() || null,
+      facts: (() => {
+        const cleaned = facts
+          .map((f) => ({ label: f.label.trim(), body: f.body.trim() }))
+          .filter((f) => f.label && f.body);
+        return cleaned.length > 0 ? cleaned : null;
+      })(),
       isActive,
       sortOrder: item?.sortOrder ?? 999,
     };
@@ -483,6 +504,59 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved, d
               </View>
             )}
 
+            <Text style={[typography.label, styles.fieldLabel]}>EXTRA INFO TILES (shown as circles on the dish card)</Text>
+            <Text style={typography.bodyMuted}>
+              Add any extra facts you want customers to see on this dish's card on the globe — e.g. "Chef's tip" or
+              "Pairs well with". Use the arrows to reorder them.
+            </Text>
+            {facts.length > 0 && (
+              <View style={styles.factList}>
+                {facts.map((fact, i) => (
+                  <View key={i} style={styles.factRow}>
+                    <View style={styles.factReorder}>
+                      <Pressable
+                        style={[styles.reorderButton, i === 0 && styles.reorderButtonDisabled]}
+                        onPress={() => moveFact(i, -1)}
+                        disabled={i === 0}
+                      >
+                        <Text style={styles.reorderButtonText}>↑</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.reorderButton, i === facts.length - 1 && styles.reorderButtonDisabled]}
+                        onPress={() => moveFact(i, 1)}
+                        disabled={i === facts.length - 1}
+                      >
+                        <Text style={styles.reorderButtonText}>↓</Text>
+                      </Pressable>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <TextInput
+                        value={fact.label}
+                        onChangeText={(v) => updateFact(i, { label: v })}
+                        placeholder="Tile title, e.g. Chef's tip"
+                        placeholderTextColor={colors.inkMuted}
+                        style={styles.input}
+                      />
+                      <TextInput
+                        value={fact.body}
+                        onChangeText={(v) => updateFact(i, { body: v })}
+                        placeholder="Tile text"
+                        placeholderTextColor={colors.inkMuted}
+                        multiline
+                        style={[styles.input, styles.multiline, { minHeight: 40 }]}
+                      />
+                    </View>
+                    <Pressable onPress={() => removeFact(i)} hitSlop={8}>
+                      <Text style={{ color: colors.danger, marginLeft: spacing.sm }}>✕</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
+            <Pressable style={[styles.smallButton, { marginTop: spacing.sm, alignSelf: 'flex-start' }]} onPress={addFact}>
+              <Text style={styles.smallButtonText}>+ Add info tile</Text>
+            </Pressable>
+
             <Text style={[typography.label, styles.fieldLabel]}>SHARED STOP (e.g. a partner restaurant)</Text>
             <Text style={typography.bodyMuted}>
               Give two or more items the same group id to offer them as choices inside one globe pin's pop-out — only the
@@ -657,6 +731,41 @@ const styles = StyleSheet.create({
   },
   addOnList: {
     marginTop: spacing.xs,
+  },
+  factList: {
+    marginTop: spacing.xs,
+    gap: spacing.sm,
+  },
+  factRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'flex-start',
+    backgroundColor: colors.cream,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: spacing.sm,
+  },
+  factReorder: {
+    gap: 4,
+  },
+  reorderButton: {
+    width: 26,
+    height: 26,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reorderButtonDisabled: {
+    opacity: 0.35,
+  },
+  reorderButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.inkMuted,
   },
   addOnRow: {
     flexDirection: 'row',
