@@ -17,23 +17,10 @@ const logoImage = require('../assets/planetary-eats-logo.png');
 interface Props {
   items: MenuItem[]; // must have `origin` set
   onSelect: (item: MenuItem) => void;
-  activeFilter?: string;
-  onFilterChange?: (filter: any) => void;
 }
-
-const NUTRITION_FILTERS: { key: string; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'high-protein', label: 'High Protein' },
-  { key: 'lower-carb', label: 'Lower Carb' },
-  { key: 'vegetarian', label: 'Vegetarian' },
-];
 
 const SPHERE_RADIUS = 1.3;
 const CAMERA_Z = 3.2;
-const CAMERA_Z_MIN = 3.0;
-const CAMERA_Z_MAX = 3.85;
-const AUTO_ROTATION_SPEED = 0.00012; // radians per millisecond (one turn in ~52 seconds)
-const INTRO_COMPLETE_EVENT = 'planetary-eats:intro-complete';
 
 function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
@@ -100,7 +87,7 @@ function useTwinkleKeyframes() {
   }, []);
 }
 
-export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterChange }: Props) {
+export default function GlobeExplorer({ items, onSelect }: Props) {
   const [globeSize, setGlobeSize] = useState(320);
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -215,10 +202,9 @@ export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterC
       }
     });
 
-    // Keep the globe drifting until the user takes control by dragging it.
-    // The film's final frame is authored at rotY=0 (the Americas centered).
-    // Hold that exact pose until the overlay has landed on this canvas and
-    // faded away; only then resume the normal automatic drift.
+    // The globe holds a fixed front-facing pose (rotY=0, the Americas
+    // centered, matching the splash film's final frame) every time the page
+    // loads, and only moves if someone drags it.
     const state = {
       rotY: 0,
       rotX: 0,
@@ -227,9 +213,6 @@ export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterC
       dragging: false,
       lastX: 0,
       lastY: 0,
-      introComplete:
-        typeof document === 'undefined' ||
-        document.documentElement.dataset.planetaryIntro === 'complete',
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -250,36 +233,14 @@ export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterC
       state.dragging = false;
       canvas.style.cursor = 'grab';
     };
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      state.cameraZTarget = Math.max(
-        CAMERA_Z_MIN,
-        Math.min(CAMERA_Z_MAX, state.cameraZTarget - e.deltaY * 0.0012)
-      );
-    };
-    const onIntroComplete = () => {
-      state.introComplete = true;
-      lastFrameTime = performance.now();
-    };
 
     canvas.style.cursor = 'grab';
     canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener(INTRO_COMPLETE_EVENT, onIntroComplete);
 
     let raf = 0;
-    let lastFrameTime = performance.now();
-    const animate = (frameTime: number) => {
-      // Use elapsed time so the rotation speed is consistent across displays.
-      // Clamp it to prevent a large jump after returning to a background tab.
-      const elapsed = Math.min(frameTime - lastFrameTime, 100);
-      lastFrameTime = frameTime;
-      if (state.introComplete && !state.dragging) {
-        state.rotY += AUTO_ROTATION_SPEED * elapsed;
-      }
-
+    const animate = () => {
       state.cameraZ += (state.cameraZTarget - state.cameraZ) * 0.12;
       camera.position.z = state.cameraZ;
 
@@ -323,10 +284,8 @@ export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterC
     return () => {
       cancelAnimationFrame(raf);
       canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('wheel', onWheel);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener(INTRO_COMPLETE_EVENT, onIntroComplete);
       renderer.dispose();
       geometry.dispose();
       material.dispose();
@@ -409,22 +368,6 @@ export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterC
             accessibilityLabel="Planetary Eats"
           />
           <Text style={styles.tagline}>Good for you. Good for the planet.</Text>
-          {onFilterChange && (
-            <View style={styles.filterRow}>
-              {NUTRITION_FILTERS.map((f) => {
-                const active = (activeFilter ?? 'all') === f.key;
-                return (
-                  <Pressable
-                    key={f.key}
-                    style={[styles.filterChip, active && styles.filterChipActive]}
-                    onPress={() => onFilterChange(f.key)}
-                  >
-                    <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{f.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          )}
         </>
       )}
 
@@ -535,7 +478,7 @@ export default function GlobeExplorer({ items, onSelect, activeFilter, onFilterC
         </View>
 
         <Text style={[styles.hint, activeBowlId ? { opacity: 0 } : null]}>
-          Scroll to zoom · drag to spin · tap a bowl to explore
+          Drag to spin · tap a bowl to explore
         </Text>
 
         <BowlPopModal
@@ -567,36 +510,6 @@ const styles = {
     marginTop: 2,
     marginBottom: spacing.md,
     fontFamily: fonts.body,
-  },
-  filterRow: {
-    flexDirection: 'row' as const,
-    flexWrap: 'wrap' as const,
-    gap: spacing.xs,
-    justifyContent: 'center' as const,
-    marginTop: -spacing.sm,
-    marginBottom: spacing.md,
-    paddingHorizontal: spacing.lg,
-  },
-  filterChip: {
-    paddingVertical: 6,
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  filterChipActive: {
-    backgroundColor: colors.forest,
-    borderColor: colors.forest,
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '700' as const,
-    color: colors.inkMuted,
-    fontFamily: fonts.body,
-  },
-  filterChipTextActive: {
-    color: colors.white,
   },
   hint: {
     marginTop: spacing.sm,
