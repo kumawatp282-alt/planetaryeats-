@@ -1,21 +1,35 @@
 // Real 3D Earth (web only) — the user's own Blender scene, rendered live
 // with three.js so it can be freely dragged on both axes, all the way to
-// the poles. Three layers, all from the same Blender file
+// the poles. Everything comes from the same Blender file
 // (~/Downloads/Untitled23.blend — the actual project, not just an
-// export): the globe's own real, full-detail mesh (public/globe_earth.glb
-// — the actual "Earth" object from that scene, Draco-compressed, not the
-// separately-UV-unwrapped mesh the original web export used, which had
-// no guarantee of matching a fresh bake's UVs — it didn't, which is why
-// this is the Earth mesh now, not that one) textured with a fresh Cycles
-// "Combined" bake of the real procedural EarthMat material
-// (public/globe_earth.jpg); a cloud layer with its own
-// geometry/UVs and baked alpha texture (public/globe_clouds.glb +
-// globe_clouds.png); and the scattered tree clusters as real geometry
-// (public/globe_trees.glb, Draco-compressed, ~7MB -> ~1MB). All baked
-// from — and all rendered unlit to match — the exact lighting in that
-// scene; see the unlit comment further down for why. No zoom, no
-// auto-rotation. Each country is plain text pinned to its location;
-// tapping one pops the bowl out full-circle over the globe.
+// export), and — this is the important bit, after two rounds of a
+// hand-written lat/long formula putting countries, trees and poles in
+// subtly wrong places — country-label positions are no longer computed
+// at all. They're read directly off the real `Name_<country>` objects the
+// user placed by hand in that scene, exported alongside the Earth/Clouds/
+// Trees geometry in one glTF (public/globe_combined.glb) so every layer
+// shares the exact same transform by construction: whatever Blender says
+// is true here, no formula to get wrong. See latLongToVector3's comment
+// further down for why it still exists (as a fallback only) and the new
+// top comment on the Name_* extraction code below for how this works.
+//
+// public/globe_earth.glb carries the real "Earth" mesh's geometry *and*
+// its color baked straight to per-vertex colors (Cycles "Combined" bake,
+// target VERTEX_COLORS) rather than to a UV image texture — the image-bake
+// version had a genuine Cycles artifact at the pole (the shader's
+// Object-space noise coordinates get degenerate right at the UV seam/pole,
+// baking out as a flat gray smear there independent of what's actually
+// painted on the mesh); a real Cycles *render* of the same material never
+// showed this, only the UV-texel bake did, so moving the bake target off
+// UV sampling entirely removes the defect at its root instead of patching
+// around it. public/globe_combined.glb carries Clouds (its own baked
+// alpha texture, globe_clouds.png), Trees0/1/2 (flat per-cluster colors,
+// no baking needed), and the real `Name_<country>` label meshes (hidden —
+// only their position is used, see below). All baked from — and all
+// rendered unlit to match — the exact lighting in that scene; see the
+// unlit comment further down for why. No zoom, no auto-rotation. Each
+// country is plain text pinned to its location; tapping one pops the bowl
+// out full-circle over the globe.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 import * as THREE from 'three';
@@ -77,25 +91,19 @@ const MESH_AXIS_CORRECTION = 0;
 // pins but put Japan and Singapore over Africa once dragged into view.
 const LON_OFFSET_DEG = 180;
 
-// Two earlier passes at this formula (one swapping which component was
-// "pole", one just flipping the z sign) each looked right on a handful of
-// spot-checked countries and were still wrong — a formula that's tens of
-// degrees off can still land "near enough" to a busy, zoomed texture to
-// pass a visual check. This round used real data instead of a spot-check:
-// exported the real Earth mesh (uncompressed, for easy parsing), matched
-// ~400 exported vertices back to their raw Blender-side (x,y,z) by shared
-// UV, and fit *every* axis against the sphere's own (sin phi cos theta,
-// sin phi sin theta, cos phi) terms rather than assuming which output
-// component is which. The fit (RMSE < 0.013 on unit-scale coordinates —
-// see MESH_AXIS_CORRECTION's comment for the full method) says the pole
-// term belongs on y, not z, and the longitude-dependent term belongs on
-// z, not y — the two previous passes had correctly identified *a* sign
-// bug each time but on the wrong pair of axes. This was then independently
-// cross-checked a different way: sampled public/globe_earth.jpg's actual
-// pixels at this formula's (lat,long)->(u,v) for the Sahara, mid-Pacific,
-// Amazon and Germany — tan desert, blue ocean, dark forest-green, and
-// green land respectively, as expected, confirming the underlying
-// lat/long -> UV convention independently of the 3D vertex fit above.
+// FALLBACK ONLY. Every country currently on the menu has a real hand-placed
+// `Name_<country>` object in the Blender scene, and the marker-placement
+// code below reads that object's actual exported position instead of
+// calling this — the three previous rounds of this file each shipped a
+// subtly-wrong version of this exact formula (two different axis/sign
+// mistakes that each looked right on a handful of spot-checked countries),
+// which is exactly the class of bug that reading Blender's own data instead
+// of recomputing it sidesteps entirely. This stays only so a *future* menu
+// item whose country has no Name_<country> label in the scene still gets
+// placed somewhere plausible by real-world lat/long rather than not
+// appearing at all — if that ever triggers, the right fix is to add a real
+// label object in Blender and re-export, not to trust this formula's exact
+// placement.
 function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (long + LON_OFFSET_DEG) * (Math.PI / 180);
@@ -104,6 +112,14 @@ function latLongToVector3(lat: number, long: number, radius: number): THREE.Vect
     radius * Math.cos(phi),
     radius * Math.sin(phi) * Math.sin(theta)
   );
+}
+
+// Matches a menu item's origin.country ("West Africa") to its real label
+// object's name in the Blender scene (Name_westafrica) — every country name
+// in data/menu.ts happens to need nothing more than lowercasing and
+// dropping spaces to match how the user named these objects.
+function nameKeyFor(country: string): string {
+  return `Name_${country.toLowerCase().replace(/\s+/g, '')}`;
 }
 
 // Escape hatch for the one plain DOM element RN has no primitive for.
@@ -199,6 +215,11 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     const globeGroup = new THREE.Group();
     scene.add(globeGroup);
 
+    // Filled in once globe_combined.glb loads (see below) — a plain object
+    // rather than state, since it's read every frame in the imperative
+    // animate() loop, not rendered from.
+    const markerBase: Record<string, THREE.Vector3> = {};
+
     // Plain-color placeholder, visible for the brief moment before the
     // real mesh finishes loading, so the canvas is never blank.
     const placeholderGeometry = new THREE.SphereGeometry(SPHERE_RADIUS, 48, 48);
@@ -239,13 +260,15 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     gltfLoader.setDRACOLoader(dracoLoader);
     let loadedMesh: THREE.Object3D | null = null;
 
-    // The real globe mesh, textured with the fresh Combined bake (richer
-    // than the texture in the original web export — that one was baked for
-    // a lightweight asset; this one is baked straight from the full-detail
-    // procedural material, visible terrain/tree speckle and all).
+    // The real globe mesh. Color comes from real per-vertex data baked
+    // straight off the material (see the top-of-file comment for why
+    // that's a vertex-color bake rather than a UV-texture bake) — so this
+    // just needs vertexColors switched on, no texture to load or apply.
     gltfLoader.load('/globe_earth.glb', (gltf) => {
       gltf.scene.traverse((child) => {
-        if (child instanceof THREE.Mesh) applyColorTexture(child, '/globe_earth.jpg', false);
+        if (child instanceof THREE.Mesh) {
+          child.material = new THREE.MeshBasicMaterial({ vertexColors: true });
+        }
       });
       gltf.scene.scale.setScalar(SPHERE_RADIUS);
       gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
@@ -256,41 +279,56 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       loadedMesh = gltf.scene;
     });
 
-    // The cloud layer — the mesh's own geometry/UVs (not a generic sphere),
-    // so the baked cloud texture lines up with it exactly. Sits a hair
-    // above the globe's own surface (baked into this mesh's vertex radius
-    // already), alpha-blended so only the wispy cloud shapes show.
-    let loadedClouds: THREE.Object3D | null = null;
-    gltfLoader.load('/globe_clouds.glb', (gltf) => {
-      gltf.scene.traverse((child) => {
-        if (child instanceof THREE.Mesh) applyColorTexture(child, '/globe_clouds.png', true);
-      });
-      gltf.scene.scale.setScalar(SPHERE_RADIUS);
-      gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
-      globeGroup.add(gltf.scene);
-      loadedClouds = gltf.scene;
-    });
-
-    // The scattered tree clusters — real geometry (not texture detail),
-    // same as in the Blender scene. Flat unlit colors matching each tree
-    // material's own base color (no baking needed for a flat color).
+    // Clouds, trees and every country label, all in one glTF exported
+    // straight from the real GlobeRoot hierarchy in Blender — see the
+    // top-of-file comment for why labels are read from this instead of
+    // computed. Same SPHERE_RADIUS scale and MESH_AXIS_CORRECTION as
+    // Earth above, since this came out of an identical export call on
+    // siblings of the same Earth object (same scene, same transform).
     const TREE_COLORS: Record<string, number> = {
       Tree0: 0x2b7519,
       Tree1: 0x0a4710,
       Tree2: 0x0d381e,
     };
-    let loadedTrees: THREE.Object3D | null = null;
-    gltfLoader.load('/globe_trees.glb', (gltf) => {
-      gltf.scene.traverse((child) => {
-        if (!(child instanceof THREE.Mesh)) return;
-        const prevName = (child.material as THREE.Material)?.name ?? '';
-        const color = TREE_COLORS[prevName] ?? 0x1e5c22;
-        child.material = new THREE.MeshBasicMaterial({ color });
-      });
+    let loadedExtras: THREE.Object3D | null = null;
+    gltfLoader.load('/globe_combined.glb', (gltf) => {
       gltf.scene.scale.setScalar(SPHERE_RADIUS);
       gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
+      // Compute this *before* adding to globeGroup — with no parent yet,
+      // updateMatrixWorld() resolves each child's "world" matrix using
+      // only the scale/rotation just set above, which is exactly the
+      // globeGroup-local frame markerBase needs (globeGroup itself only
+      // ever gets the live drag rotation applied, nothing else).
+      gltf.scene.updateMatrixWorld(true);
+
+      bowlItems.forEach((item) => {
+        if (!item.origin) return;
+        const nameNode = gltf.scene.getObjectByName(nameKeyFor(item.origin.country));
+        if (!nameNode) {
+          // eslint-disable-next-line no-console
+          console.warn(`No Name_<country> label found in globe_combined.glb for "${item.origin.country}" — falling back to computed lat/long, which has a history of being subtly wrong.`);
+          markerBase[item.id] = latLongToVector3(item.origin.lat, item.origin.long, SPHERE_RADIUS + 0.015);
+          return;
+        }
+        nameNode.visible = false; // position only — our own HTML label renders the text
+        const center = new THREE.Box3().setFromObject(nameNode).getCenter(new THREE.Vector3());
+        markerBase[item.id] = center;
+      });
+
+      gltf.scene.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        if (child.name === 'Clouds') {
+          applyColorTexture(child, '/globe_clouds.png', true);
+        } else if (child.name.startsWith('Trees')) {
+          const prevName = (child.material as THREE.Material)?.name ?? '';
+          const color = TREE_COLORS[prevName] ?? TREE_COLORS[child.name] ?? 0x1e5c22;
+          child.material = new THREE.MeshBasicMaterial({ color });
+        }
+        // Name_<country> meshes: no material change needed, they're hidden above.
+      });
+
       globeGroup.add(gltf.scene);
-      loadedTrees = gltf.scene;
+      loadedExtras = gltf.scene;
     });
 
     // A thin, soft rim-light right at the globe's own edge — not the wide
@@ -327,13 +365,6 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       depthWrite: false,
     });
     scene.add(new THREE.Mesh(atmosphereGeometry, atmosphereMaterial));
-
-    const markerBase: Record<string, THREE.Vector3> = {};
-    bowlItems.forEach((item) => {
-      if (item.origin) {
-        markerBase[item.id] = latLongToVector3(item.origin.lat, item.origin.long, SPHERE_RADIUS + 0.015);
-      }
-    });
 
     // The globe holds a fixed front-facing pose (rotY=0, rotX=0) every
     // time the page loads, and only moves if someone drags it — free on
@@ -412,7 +443,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       placeholderMaterial.dispose();
       atmosphereGeometry.dispose();
       atmosphereMaterial.dispose();
-      [loadedMesh, loadedClouds, loadedTrees].forEach((obj) => {
+      [loadedMesh, loadedExtras].forEach((obj) => {
         if (!obj) return;
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh) {
