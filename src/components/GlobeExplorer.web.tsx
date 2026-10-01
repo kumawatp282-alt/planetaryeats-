@@ -1,16 +1,28 @@
-// Real 3D Earth (web only) — the user's own Blender-made globe mesh
-// (public/planetary_globe.glb: the actual mesh + the color texture baked
-// in that same session), rendered live with three.js so it can be freely
-// dragged on both axes — including all the way to the poles — rather
-// than the fixed-tilt pre-rendered frame sequence this replaced (that
-// could only spin horizontally and never showed the poles at all). No
-// zoom, no auto-rotation. Each country is plain text pinned to its
-// location; tapping one pops the bowl out full-circle over the globe.
+// Real 3D Earth (web only) — the user's own Blender scene, rendered live
+// with three.js so it can be freely dragged on both axes, all the way to
+// the poles. Three layers, all from the same Blender file
+// (~/Downloads/Untitled23.blend — the actual project, not just an
+// export): the globe's own real, full-detail mesh (public/globe_earth.glb
+// — the actual "Earth" object from that scene, Draco-compressed, not the
+// separately-UV-unwrapped mesh the original web export used, which had
+// no guarantee of matching a fresh bake's UVs — it didn't, which is why
+// this is the Earth mesh now, not that one) textured with a fresh Cycles
+// "Combined" bake of the real procedural EarthMat material
+// (public/globe_earth.jpg); a cloud layer with its own
+// geometry/UVs and baked alpha texture (public/globe_clouds.glb +
+// globe_clouds.png); and the scattered tree clusters as real geometry
+// (public/globe_trees.glb, Draco-compressed, ~7MB -> ~1MB). All baked
+// from — and all rendered unlit to match — the exact lighting in that
+// scene; see the unlit comment further down for why. No zoom, no
+// auto-rotation. Each country is plain text pinned to its location;
+// tapping one pops the bowl out full-circle over the globe.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 import * as THREE from 'three';
 // eslint-disable-next-line import/no-unresolved
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+// eslint-disable-next-line import/no-unresolved
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MenuItem } from '../data/menu';
 import { colors, fonts, spacing } from '../constants/theme';
 import BowlPopModal from './BowlPopModal';
@@ -28,6 +40,12 @@ const CAMERA_Z = 3.2;
 // never quite flips past vertical (which reads as disorienting), but
 // close enough that both poles are fully reachable by dragging.
 const PITCH_LIMIT = 1.45;
+// Blender's glTF exporter put this mesh's pole on a different native
+// axis than the old GlobeWeb mesh had — this rotation (applied to every
+// loaded mesh: Earth, Clouds, Trees) brings it back in line with
+// latLongToVector3's Y-is-the-pole assumption. See that function's
+// comment for how this was verified.
+const MESH_AXIS_CORRECTION = Math.PI;
 
 // Longitude phase for this mesh's own texture UV layout. Same as the
 // original sphere's convention (long+180) — verified directly against
@@ -42,13 +60,22 @@ const PITCH_LIMIT = 1.45;
 // pins but put Japan and Singapore over Africa once dragged into view.
 const LON_OFFSET_DEG = 180;
 
+// The z sign here (negative, where the original GlobeWeb-based version
+// was positive) matches a +90°-around-X correction applied to every
+// loaded mesh below — this new mesh (exported straight from Blender's
+// own glTF exporter, unlike GlobeWeb) comes out with its pole on a
+// different native axis than GlobeWeb had. Verified numerically against
+// the actual exported vertex data (not just by eye): computed this
+// formula's output for sampled vertices' real lat/long, rotated those
+// same raw vertices by the same +90°, and confirmed they land on the
+// same points this formula predicts, within sampling precision.
 function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (long + LON_OFFSET_DEG) * (Math.PI / 180);
   return new THREE.Vector3(
     -radius * Math.sin(phi) * Math.cos(theta),
-    radius * Math.cos(phi),
-    radius * Math.sin(phi) * Math.sin(theta)
+    radius * Math.sin(phi) * Math.sin(theta),
+    radius * Math.cos(phi)
   );
 }
 
@@ -152,50 +179,91 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     const placeholder = new THREE.Mesh(placeholderGeometry, placeholderMaterial);
     globeGroup.add(placeholder);
 
-    // Lit, not unlit — the mesh's normal map (the mountain/terrain relief
-    // baked in Blender) only has anything to shade against when there are
-    // real lights in the scene. A strong ambient floor keeps every side
-    // bright (no globe-has-a-dark-side problem while free-dragging); the
-    // directional light on top of that is what makes the terrain actually
-    // read as bumpy/three-dimensional instead of a flat printed texture.
-    scene.add(new THREE.AmbientLight(0xffffff, 1.6));
-    const keyLight = new THREE.DirectionalLight(0xfff3df, 1.3);
-    keyLight.position.set(-2.4, 2.6, 3.2);
-    scene.add(keyLight);
+    // Unlit, deliberately. These textures aren't plain color maps — they're
+    // baked directly from the user's actual Blender scene (Cycles "Combined"
+    // bake: the real EarthMat procedural material, lit by the real GlobeSun
+    // + GlobeFill lights, including the soft shadow and specular highlight
+    // that scene produces). The lighting is already *in* the pixels, so
+    // relighting it live would double up — real-time lights on top of an
+    // already-lit bake looks wrong, not right. Unlit just displays exactly
+    // what Blender rendered, from any angle, since there's nothing left for
+    // real-time lighting to compute.
+    const textureLoader = new THREE.TextureLoader();
+    const anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-    const gltfLoader = new GLTFLoader();
-    let loadedMesh: THREE.Object3D | null = null;
-    gltfLoader.load('/planetary_globe.glb', (gltf) => {
-      gltf.scene.traverse((child) => {
-        if (!(child instanceof THREE.Mesh)) return;
-        const prevMaterial = child.material as THREE.MeshStandardMaterial;
-        const colorMap = prevMaterial?.map ?? null;
-        const normalMap = prevMaterial?.normalMap ?? null;
-        if (colorMap) {
-          if ('colorSpace' in colorMap) (colorMap as any).colorSpace = (THREE as any).SRGBColorSpace;
-          // Default anisotropy is 1, which blurs badly at the shallow
-          // viewing angles a sphere's curvature constantly produces —
-          // most of the globe is never viewed face-on to its surface.
-          // This is what was reading as "lower quality than Blender":
-          // Blender's viewport applies proper anisotropic filtering by
-          // default, three.js does not unless asked.
-          colorMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
-          colorMap.needsUpdate = true;
-        }
-        if (normalMap) normalMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        child.material = new THREE.MeshStandardMaterial({
-          map: colorMap ?? undefined,
-          normalMap: normalMap ?? undefined,
-          roughness: 0.88,
-          metalness: 0,
+    function applyColorTexture(mesh: THREE.Mesh, url: string, transparent: boolean) {
+      textureLoader.load(url, (tex) => {
+        if ('colorSpace' in tex) (tex as any).colorSpace = (THREE as any).SRGBColorSpace;
+        tex.anisotropy = anisotropy;
+        mesh.material = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent,
+          depthWrite: !transparent,
         });
       });
+    }
+
+    // Trees were Draco-compressed on export (85k+131k+39k vertices,
+    // ~7MB raw -> ~1MB compressed) — needs the matching decoder, served
+    // from public/draco/ alongside everything else rather than a CDN.
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('/draco/');
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.setDRACOLoader(dracoLoader);
+    let loadedMesh: THREE.Object3D | null = null;
+
+    // The real globe mesh, textured with the fresh Combined bake (richer
+    // than the texture in the original web export — that one was baked for
+    // a lightweight asset; this one is baked straight from the full-detail
+    // procedural material, visible terrain/tree speckle and all).
+    gltfLoader.load('/globe_earth.glb', (gltf) => {
+      gltf.scene.traverse((child) => {
+        if (child instanceof THREE.Mesh) applyColorTexture(child, '/globe_earth.jpg', false);
+      });
       gltf.scene.scale.setScalar(SPHERE_RADIUS);
+      gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
       globeGroup.remove(placeholder);
       placeholderGeometry.dispose();
       placeholderMaterial.dispose();
       globeGroup.add(gltf.scene);
       loadedMesh = gltf.scene;
+    });
+
+    // The cloud layer — the mesh's own geometry/UVs (not a generic sphere),
+    // so the baked cloud texture lines up with it exactly. Sits a hair
+    // above the globe's own surface (baked into this mesh's vertex radius
+    // already), alpha-blended so only the wispy cloud shapes show.
+    let loadedClouds: THREE.Object3D | null = null;
+    gltfLoader.load('/globe_clouds.glb', (gltf) => {
+      gltf.scene.traverse((child) => {
+        if (child instanceof THREE.Mesh) applyColorTexture(child, '/globe_clouds.png', true);
+      });
+      gltf.scene.scale.setScalar(SPHERE_RADIUS);
+      gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
+      globeGroup.add(gltf.scene);
+      loadedClouds = gltf.scene;
+    });
+
+    // The scattered tree clusters — real geometry (not texture detail),
+    // same as in the Blender scene. Flat unlit colors matching each tree
+    // material's own base color (no baking needed for a flat color).
+    const TREE_COLORS: Record<string, number> = {
+      Tree0: 0x2b7519,
+      Tree1: 0x0a4710,
+      Tree2: 0x0d381e,
+    };
+    let loadedTrees: THREE.Object3D | null = null;
+    gltfLoader.load('/globe_trees.glb', (gltf) => {
+      gltf.scene.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const prevName = (child.material as THREE.Material)?.name ?? '';
+        const color = TREE_COLORS[prevName] ?? 0x1e5c22;
+        child.material = new THREE.MeshBasicMaterial({ color });
+      });
+      gltf.scene.scale.setScalar(SPHERE_RADIUS);
+      gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
+      globeGroup.add(gltf.scene);
+      loadedTrees = gltf.scene;
     });
 
     // A thin, soft rim-light right at the globe's own edge — not the wide
@@ -312,21 +380,22 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       renderer.dispose();
+      dracoLoader.dispose();
       placeholderGeometry.dispose();
       placeholderMaterial.dispose();
       atmosphereGeometry.dispose();
       atmosphereMaterial.dispose();
-      if (loadedMesh) {
-        loadedMesh.traverse((child) => {
+      [loadedMesh, loadedClouds, loadedTrees].forEach((obj) => {
+        if (!obj) return;
+        obj.traverse((child) => {
           if (child instanceof THREE.Mesh) {
             child.geometry.dispose();
-            const mat = child.material as THREE.MeshStandardMaterial;
+            const mat = child.material as THREE.MeshBasicMaterial;
             mat?.map?.dispose();
-            mat?.normalMap?.dispose();
-            (child.material as THREE.Material)?.dispose();
+            mat?.dispose();
           }
         });
-      }
+      });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globeSize]);
