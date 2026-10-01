@@ -29,14 +29,18 @@ const CAMERA_Z = 3.2;
 // close enough that both poles are fully reachable by dragging.
 const PITCH_LIMIT = 1.45;
 
-// Longitude phase for this mesh's own texture UV layout — this globe's
-// color texture is the same artwork used for the (now-removed) baked
-// frame render, where this exact offset (90°, not the old sphere's 180°)
-// was solved empirically by projecting known pins against the baked
-// country labels. Same mesh, same texture, so the same offset applies
-// here too — confirmed by checking pins land on the right countries
-// after this file shipped.
-const LON_OFFSET_DEG = 90;
+// Longitude phase for this mesh's own texture UV layout. Same as the
+// original sphere's convention (long+180) — verified directly against
+// the mesh's own data: decoded the .glb's vertex positions and UVs,
+// derived the true relationship (texture longitude = u*360 - 180, a
+// standard equirectangular unwrap), and cross-checked by sampling the
+// actual texture pixels at a few real cities' computed (u,v) — Germany's
+// coordinates land squarely on the Alps/Italy, Singapore's on the
+// Indonesian archipelago. An earlier 90° offset here came from a flawed
+// camera-model fit against the (now-removed) baked frame render and was
+// wrong — it happened to look plausible for a cluster of nearby European
+// pins but put Japan and Singapore over Africa once dragged into view.
+const LON_OFFSET_DEG = 180;
 
 function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
@@ -161,6 +165,13 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const colorMap = prevMaterial?.map ?? null;
         if (colorMap) {
           if ('colorSpace' in colorMap) (colorMap as any).colorSpace = (THREE as any).SRGBColorSpace;
+          // Default anisotropy is 1, which blurs badly at the shallow
+          // viewing angles a sphere's curvature constantly produces —
+          // most of the globe is never viewed face-on to its surface.
+          // This is what was reading as "lower quality than Blender":
+          // Blender's viewport applies proper anisotropic filtering by
+          // default, three.js does not unless asked.
+          colorMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
           colorMap.needsUpdate = true;
         }
         child.material = new THREE.MeshBasicMaterial({ map: colorMap ?? undefined, color: 0xffffff });
