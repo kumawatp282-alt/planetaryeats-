@@ -35,7 +35,14 @@ interface Props {
 }
 
 const SPHERE_RADIUS = 1.3;
-const CAMERA_Z = 3.2;
+// Distance matters more than it looks like it should here: at the old 3.2,
+// the sphere's own angular radius (~24°) was actually *larger* than the
+// camera's half-FOV (22.5° of a 45° FOV) — the globe was wider than its
+// own camera frustum, so terrain right at the limb (this is what was
+// cutting off the Himalayas while dragging) was being clipped by the
+// camera itself, before the circular canvas mask ever got involved.
+// 3.85 gives the sphere's edge a few degrees of headroom inside the frame.
+const CAMERA_Z = 3.85;
 // How far the globe can pitch before it stops — not a full 90° so it
 // never quite flips past vertical (which reads as disorienting), but
 // close enough that both poles are fully reachable by dragging.
