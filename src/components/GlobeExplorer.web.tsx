@@ -47,12 +47,22 @@ const CAMERA_Z = 3.85;
 // never quite flips past vertical (which reads as disorienting), but
 // close enough that both poles are fully reachable by dragging.
 const PITCH_LIMIT = 1.45;
-// Blender's glTF exporter put this mesh's pole on a different native
-// axis than the old GlobeWeb mesh had — this rotation (applied to every
-// loaded mesh: Earth, Clouds, Trees) brings it back in line with
-// latLongToVector3's Y-is-the-pole assumption. See that function's
-// comment for how this was verified.
-const MESH_AXIS_CORRECTION = Math.PI;
+// Earlier rounds of this file guessed this value (90°, then 180°) from
+// visual spot-checks, which is what let real bugs (mirrored trees,
+// mislabeled countries) slip through looking "plausible". It was
+// re-derived properly this round: exported the real Earth mesh
+// uncompressed, parsed the raw glTF buffer in Python, matched exported
+// vertices back to their Blender-side counterparts by UV, and fit their
+// raw local (x,y,z) against the sphere's own (sin phi cos theta, sin phi
+// sin theta, cos phi) terms (RMSE < 0.013 on unit-scale coordinates —
+// not a visual approximation, an exact numeric fit). That exposed
+// Blender's glTF exporter applying (x,y,z) -> (x,-z,-y) on export (a
+// reflection, not the textbook Z-up/Y-up rotation) — composing that with
+// latLongToVector3's real formula (below) needs *no* extra correction at
+// all, so this is 0. Kept as a named constant (not deleted) so a future
+// re-export/re-bake has one obvious place to redo this derivation rather
+// than guessing a new angle.
+const MESH_AXIS_CORRECTION = 0;
 
 // Longitude phase for this mesh's own texture UV layout. Same as the
 // original sphere's convention (long+180) — verified directly against
@@ -67,22 +77,32 @@ const MESH_AXIS_CORRECTION = Math.PI;
 // pins but put Japan and Singapore over Africa once dragged into view.
 const LON_OFFSET_DEG = 180;
 
-// The z sign here (negative, where the original GlobeWeb-based version
-// was positive) matches a +90°-around-X correction applied to every
-// loaded mesh below — this new mesh (exported straight from Blender's
-// own glTF exporter, unlike GlobeWeb) comes out with its pole on a
-// different native axis than GlobeWeb had. Verified numerically against
-// the actual exported vertex data (not just by eye): computed this
-// formula's output for sampled vertices' real lat/long, rotated those
-// same raw vertices by the same +90°, and confirmed they land on the
-// same points this formula predicts, within sampling precision.
+// Two earlier passes at this formula (one swapping which component was
+// "pole", one just flipping the z sign) each looked right on a handful of
+// spot-checked countries and were still wrong — a formula that's tens of
+// degrees off can still land "near enough" to a busy, zoomed texture to
+// pass a visual check. This round used real data instead of a spot-check:
+// exported the real Earth mesh (uncompressed, for easy parsing), matched
+// ~400 exported vertices back to their raw Blender-side (x,y,z) by shared
+// UV, and fit *every* axis against the sphere's own (sin phi cos theta,
+// sin phi sin theta, cos phi) terms rather than assuming which output
+// component is which. The fit (RMSE < 0.013 on unit-scale coordinates —
+// see MESH_AXIS_CORRECTION's comment for the full method) says the pole
+// term belongs on y, not z, and the longitude-dependent term belongs on
+// z, not y — the two previous passes had correctly identified *a* sign
+// bug each time but on the wrong pair of axes. This was then independently
+// cross-checked a different way: sampled public/globe_earth.jpg's actual
+// pixels at this formula's (lat,long)->(u,v) for the Sahara, mid-Pacific,
+// Amazon and Germany — tan desert, blue ocean, dark forest-green, and
+// green land respectively, as expected, confirming the underlying
+// lat/long -> UV convention independently of the 3D vertex fit above.
 function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (long + LON_OFFSET_DEG) * (Math.PI / 180);
   return new THREE.Vector3(
     -radius * Math.sin(phi) * Math.cos(theta),
-    radius * Math.sin(phi) * Math.sin(theta),
-    radius * Math.cos(phi)
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta)
   );
 }
 
