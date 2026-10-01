@@ -152,17 +152,25 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     const placeholder = new THREE.Mesh(placeholderGeometry, placeholderMaterial);
     globeGroup.add(placeholder);
 
+    // Lit, not unlit — the mesh's normal map (the mountain/terrain relief
+    // baked in Blender) only has anything to shade against when there are
+    // real lights in the scene. A strong ambient floor keeps every side
+    // bright (no globe-has-a-dark-side problem while free-dragging); the
+    // directional light on top of that is what makes the terrain actually
+    // read as bumpy/three-dimensional instead of a flat printed texture.
+    scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+    const keyLight = new THREE.DirectionalLight(0xfff3df, 1.3);
+    keyLight.position.set(-2.4, 2.6, 3.2);
+    scene.add(keyLight);
+
     const gltfLoader = new GLTFLoader();
     let loadedMesh: THREE.Object3D | null = null;
     gltfLoader.load('/planetary_globe.glb', (gltf) => {
-      // Unlit, like the rest of this globe's look — the color texture
-      // already has its own shading painted in, and staying unlit means
-      // it reads the same bright, vivid way from every angle instead of
-      // rotating into a dim "night side" as someone drags it around.
       gltf.scene.traverse((child) => {
         if (!(child instanceof THREE.Mesh)) return;
         const prevMaterial = child.material as THREE.MeshStandardMaterial;
         const colorMap = prevMaterial?.map ?? null;
+        const normalMap = prevMaterial?.normalMap ?? null;
         if (colorMap) {
           if ('colorSpace' in colorMap) (colorMap as any).colorSpace = (THREE as any).SRGBColorSpace;
           // Default anisotropy is 1, which blurs badly at the shallow
@@ -174,7 +182,13 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           colorMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
           colorMap.needsUpdate = true;
         }
-        child.material = new THREE.MeshBasicMaterial({ map: colorMap ?? undefined, color: 0xffffff });
+        if (normalMap) normalMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        child.material = new THREE.MeshStandardMaterial({
+          map: colorMap ?? undefined,
+          normalMap: normalMap ?? undefined,
+          roughness: 0.88,
+          metalness: 0,
+        });
       });
       gltf.scene.scale.setScalar(SPHERE_RADIUS);
       globeGroup.remove(placeholder);
@@ -184,11 +198,15 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       loadedMesh = gltf.scene;
     });
 
-    // Fresnel-based atmosphere glow — bright at the grazing edge, transparent
-    // toward the center, like real atmospheric scattering.
-    const atmosphereGeometry = new THREE.SphereGeometry(SPHERE_RADIUS * 1.16, 64, 64);
+    // A thin, soft rim-light right at the globe's own edge — not the wide
+    // separate "ring" the old satellite-photo globe used (that warm-gold
+    // glow was tuned against a dark navy ocean; against this globe's own
+    // bright pastel palette it read as a mismatched halo sitting apart
+    // from it rather than part of it). Tight radius, low intensity, pale
+    // neutral color: barely-there edge definition, not a second shape.
+    const atmosphereGeometry = new THREE.SphereGeometry(SPHERE_RADIUS * 1.045, 64, 64);
     const atmosphereMaterial = new THREE.ShaderMaterial({
-      uniforms: { glowColor: { value: new THREE.Color(0xe4b878) } },
+      uniforms: { glowColor: { value: new THREE.Color(0xffffff) } },
       vertexShader: `
         varying vec3 vNormal;
         varying vec3 vViewPos;
@@ -204,8 +222,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         varying vec3 vViewPos;
         uniform vec3 glowColor;
         void main() {
-          float intensity = pow(1.0 - max(dot(normalize(vNormal), normalize(vViewPos)), 0.0), 3.0);
-          gl_FragColor = vec4(glowColor, intensity * 0.9);
+          float intensity = pow(1.0 - max(dot(normalize(vNormal), normalize(vViewPos)), 0.0), 4.0);
+          gl_FragColor = vec4(glowColor, intensity * 0.35);
         }
       `,
       side: THREE.BackSide,
@@ -214,17 +232,6 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       depthWrite: false,
     });
     scene.add(new THREE.Mesh(atmosphereGeometry, atmosphereMaterial));
-
-    // Soft outer nebula-colored halo behind everything.
-    const haloGeometry = new THREE.SphereGeometry(SPHERE_RADIUS * 1.3, 32, 32);
-    const haloMaterial = new THREE.MeshBasicMaterial({
-      color: 0xd9c39a,
-      transparent: true,
-      opacity: 0.08,
-      side: THREE.BackSide,
-      depthWrite: false,
-    });
-    scene.add(new THREE.Mesh(haloGeometry, haloMaterial));
 
     const markerBase: Record<string, THREE.Vector3> = {};
     bowlItems.forEach((item) => {
@@ -268,8 +275,6 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       globeGroup.rotation.x = state.rotX;
       globeGroup.updateMatrixWorld();
 
-      const pulse = 1 + Math.sin(performance.now() * 0.003) * 0.1;
-
       bowlItems.forEach((item) => {
         const base = markerBase[item.id];
         const el = markerRefs.current[item.id] as unknown as HTMLElement | null;
@@ -289,7 +294,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const nextHover = currentHover + (hoverTarget - currentHover) * 0.25;
         hoverScaleRef.current[item.id] = nextHover;
 
-        const scale = (0.75 + depth * 0.35) * pulse * nextHover;
+        const scale = (0.75 + depth * 0.35) * nextHover;
         el.style.transform = `translate(${screenX}px, ${screenY}px) translate(-50%, -50%) scale(${scale})`;
         el.style.opacity = String(opacity);
         el.style.pointerEvents = facing ? 'auto' : 'none';
@@ -311,13 +316,13 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       placeholderMaterial.dispose();
       atmosphereGeometry.dispose();
       atmosphereMaterial.dispose();
-      haloGeometry.dispose();
-      haloMaterial.dispose();
       if (loadedMesh) {
         loadedMesh.traverse((child) => {
           if (child instanceof THREE.Mesh) {
             child.geometry.dispose();
-            (child.material as THREE.MeshBasicMaterial)?.map?.dispose();
+            const mat = child.material as THREE.MeshStandardMaterial;
+            mat?.map?.dispose();
+            mat?.normalMap?.dispose();
             (child.material as THREE.Material)?.dispose();
           }
         });
