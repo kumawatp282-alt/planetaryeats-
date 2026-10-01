@@ -1,16 +1,18 @@
-// Real Earth (web only) — the actual Blender-rendered globe (72 frames, a
-// full 360° turntable at 5° steps), displayed as two crossfaded images
-// rather than a live WebGL mesh (crossfading hides the "snap" between the
-// 72 discrete frames while dragging). Pins are positioned with plain trig
-// that reproduces the exact camera this globe was rendered with (see
-// PROJECTION NOTES below), so they track the artwork precisely. No
-// pitch-drag and no zoom — the render only exists at one fixed tilt and
-// distance. Each pin is the country's name, not a dish photo — tapping
-// one pops the bowl out full-circle over the globe.
+// Real 3D Earth (web only) — the user's own Blender-made globe mesh
+// (public/planetary_globe.glb: the actual mesh + the color texture baked
+// in that same session), rendered live with three.js so it can be freely
+// dragged on both axes — including all the way to the poles — rather
+// than the fixed-tilt pre-rendered frame sequence this replaced (that
+// could only spin horizontally and never showed the poles at all). No
+// zoom, no auto-rotation. Each country is plain text pinned to its
+// location; tapping one pops the bowl out full-circle over the globe.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
+import * as THREE from 'three';
+// eslint-disable-next-line import/no-unresolved
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MenuItem } from '../data/menu';
-import { colors, fonts, radii, spacing } from '../constants/theme';
+import { colors, fonts, spacing } from '../constants/theme';
 import BowlPopModal from './BowlPopModal';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logoImage = require('../assets/planetary-eats-logo.png');
@@ -20,97 +22,36 @@ interface Props {
   onSelect: (item: MenuItem) => void;
 }
 
-// PROJECTION NOTES — these five numbers describe exactly how the Blender
-// turntable was rendered (see public/globe_frames/globe_frames.json):
-// a camera at FRAME_DIST, elevated FRAME_TILT_DEG above the equatorial
-// plane, with vertical field of view FRAME_FOV_DEG, looking at a unit
-// globe that rotates by FRAME_STEP_DEG between each successive frame
-// (frame 0 = 0°). Reproducing that exact camera in plain trig — rather
-// than re-deriving it from scratch — is what lets a pin computed from
-// lat/long land in the same spot the artwork actually shows that country.
-// FRAME_LON_OFFSET_DEG was solved empirically (not stated in the render
-// metadata): it's the phase difference between this app's existing
-// lat/long→vector convention (inherited from the old textured-sphere
-// globe) and this render's own prime-meridian alignment — calibrated by
-// projecting known pins (Germany, Turkey, West Africa) and fitting the
-// offset that lines them up with the baked country labels in frame 0.
-const FRAME_COUNT = 72;
-const FRAME_STEP_DEG = -5;
-const FRAME_TILT_DEG = 18;
-const FRAME_DIST = 3.7;
-const FRAME_FOV_DEG = 39.597752709049864;
-const FRAME_LON_OFFSET_DEG = 90;
-const DRAG_DEG_PER_PX = 0.344; // matches the old sphere's drag feel (0.006 rad/px)
+const SPHERE_RADIUS = 1.3;
+const CAMERA_Z = 3.2;
+// How far the globe can pitch before it stops — not a full 90° so it
+// never quite flips past vertical (which reads as disorienting), but
+// close enough that both poles are fully reachable by dragging.
+const PITCH_LIMIT = 1.45;
 
-function frameUrl(index: number): string {
-  const n = ((index % FRAME_COUNT) + FRAME_COUNT) % FRAME_COUNT;
-  return `/globe_frames/f_${String(n).padStart(3, '0')}.webp`;
+// Longitude phase for this mesh's own texture UV layout — this globe's
+// color texture is the same artwork used for the (now-removed) baked
+// frame render, where this exact offset (90°, not the old sphere's 180°)
+// was solved empirically by projecting known pins against the baked
+// country labels. Same mesh, same texture, so the same offset applies
+// here too — confirmed by checking pins land on the right countries
+// after this file shipped.
+const LON_OFFSET_DEG = 90;
+
+function latLongToVector3(lat: number, long: number, radius: number): THREE.Vector3 {
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (long + LON_OFFSET_DEG) * (Math.PI / 180);
+  return new THREE.Vector3(
+    -radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta)
+  );
 }
 
-// Precomputed camera basis — the render camera never moves, only the
-// globe spins, so this only needs to be derived once.
-const TILT_RAD = (FRAME_TILT_DEG * Math.PI) / 180;
-const CAM_Y = FRAME_DIST * Math.sin(TILT_RAD);
-const CAM_Z = FRAME_DIST * Math.cos(TILT_RAD);
-const FWD_LEN = Math.sqrt(CAM_Y * CAM_Y + CAM_Z * CAM_Z);
-const FWD = { x: 0, y: -CAM_Y / FWD_LEN, z: -CAM_Z / FWD_LEN };
-// right = normalize(cross(forward, worldUp)); worldUp = (0,1,0)
-const RIGHT_RAW = { x: -FWD.z, y: 0, z: FWD.x };
-const RIGHT_LEN = Math.sqrt(RIGHT_RAW.x * RIGHT_RAW.x + RIGHT_RAW.z * RIGHT_RAW.z);
-const RIGHT = { x: RIGHT_RAW.x / RIGHT_LEN, y: 0, z: RIGHT_RAW.z / RIGHT_LEN };
-// camUp = cross(right, forward)
-const CAM_UP = {
-  x: RIGHT.y * FWD.z - RIGHT.z * FWD.y,
-  y: RIGHT.z * FWD.x - RIGHT.x * FWD.z,
-  z: RIGHT.x * FWD.y - RIGHT.y * FWD.x,
-};
-const PROJ_F = 1 / Math.tan((FRAME_FOV_DEG * Math.PI) / 180 / 2);
-
-interface Projected {
-  x: number;
-  y: number;
-  facing: number; // -1..1, >0 means the point faces the camera
-}
-
-// Projects a lat/long pin onto the current frame's image, at the globe's
-// current (continuous) yaw angle — same math that determines which frame
-// is on screen, just evaluated exactly instead of snapped to a frame.
-function projectPin(lat: number, long: number, rotYDeg: number): Projected {
-  const phi = ((90 - lat) * Math.PI) / 180;
-  const theta = ((long + FRAME_LON_OFFSET_DEG) * Math.PI) / 180;
-  const x = -Math.sin(phi) * Math.cos(theta);
-  const y = Math.cos(phi);
-  const z = Math.sin(phi) * Math.sin(theta);
-
-  // Negated: the globe's yaw convention here turns out opposite to the
-  // frame-index convention (frame N = rotY/STEP_DEG) — verified by
-  // projecting known pins against the actual rendered frames and checking
-  // they land on the baked country labels at several drag angles, not
-  // just at frame 0 where the two conventions happen to agree trivially.
-  const r = (-rotYDeg * Math.PI) / 180;
-  const xr = x * Math.cos(r) + z * Math.sin(r);
-  const zr = -x * Math.sin(r) + z * Math.cos(r);
-  const yr = y;
-
-  const relX = xr;
-  const relY = yr - CAM_Y;
-  const relZ = zr - CAM_Z;
-  const camX = relX * RIGHT.x + relY * RIGHT.y + relZ * RIGHT.z;
-  const camY = relX * CAM_UP.x + relY * CAM_UP.y + relZ * CAM_UP.z;
-  const camZ = relX * FWD.x + relY * FWD.y + relZ * FWD.z;
-
-  const ndcX = (camX / camZ) * PROJ_F;
-  const ndcY = (camY / camZ) * PROJ_F;
-
-  const toCamX = -xr;
-  const toCamY = CAM_Y - yr;
-  const toCamZ = CAM_Z - zr;
-  const toCamLen = Math.sqrt(toCamX * toCamX + toCamY * toCamY + toCamZ * toCamZ);
-  const pointLen = Math.sqrt(xr * xr + yr * yr + zr * zr);
-  const facing = (xr * toCamX + yr * toCamY + zr * toCamZ) / (pointLen * toCamLen);
-
-  return { x: (ndcX * 0.5 + 0.5) * 100, y: (1 - (ndcY * 0.5 + 0.5)) * 100, facing };
-}
+// Escape hatch for the one plain DOM element RN has no primitive for.
+const CanvasEl = 'canvas' as unknown as React.ComponentType<
+  React.CanvasHTMLAttributes<HTMLCanvasElement> & { ref?: React.Ref<HTMLCanvasElement> }
+>;
 
 interface Star {
   left: `${number}%`;
@@ -146,12 +87,7 @@ function useTwinkleKeyframes() {
         0%, 100% { opacity: 0.2; }
         50% { opacity: 1; }
       }
-      @keyframes planetary-eats-pin-ring {
-        0% { transform: scale(0.85); opacity: 0.55; }
-        70% { opacity: 0; }
-        100% { transform: scale(1.9); opacity: 0; }
-      }
-      @keyframes planetary-eats-flag-pop {
+      @keyframes planetary-eats-label-pop {
         0% { transform: scale(0); opacity: 0; }
         60% { transform: scale(1.15); opacity: 1; }
         100% { transform: scale(1); opacity: 1; }
@@ -162,30 +98,10 @@ function useTwinkleKeyframes() {
   }, []);
 }
 
-// Warms the browser's HTTP cache for every frame so scrubbing never shows
-// a blank/loading frame after the first drag — fired once, fire-and-forget.
-let framesPreloaded = false;
-function usePreloadFrames() {
-  useEffect(() => {
-    if (framesPreloaded || typeof window === 'undefined') return;
-    framesPreloaded = true;
-    for (let i = 0; i < FRAME_COUNT; i++) {
-      const img = new window.Image();
-      img.src = frameUrl(i);
-    }
-  }, []);
-}
-
 export default function GlobeExplorer({ items, onSelect }: Props) {
   const [globeSize, setGlobeSize] = useState(320);
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
-  // Two stacked layers, crossfaded on every frame change — scrubbing
-  // through 72 discrete frames would otherwise "snap" between them;
-  // fading the incoming frame in while the outgoing one fades out reads
-  // as a continuous spin instead of a slideshow.
-  const imgRefs = useRef<[HTMLImageElement | null, HTMLImageElement | null]>([null, null]);
-  const activeLayerRef = useRef<0 | 1>(0);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const markerRefs = useRef<Record<string, View | null>>({});
   // Cursor-hover zoom on pins — read/written every frame in the imperative
   // animate() loop below, so this stays a ref (a pin popping shouldn't
@@ -194,11 +110,10 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
   const hoverScaleRef = useRef<Record<string, number>>({});
   const stars = useStarfield(50);
   useTwinkleKeyframes();
-  usePreloadFrames();
 
   useEffect(() => {
     function updateSize() {
-      setGlobeSize(Math.min(window.innerWidth * 0.92, window.innerHeight * 0.64, 620));
+      setGlobeSize(Math.min(window.innerWidth * 0.95, window.innerHeight * 0.72, 760));
     }
     updateSize();
     window.addEventListener('resize', updateSize);
@@ -208,89 +123,194 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
   const bowlItems = items.filter((item) => item.origin);
 
   useEffect(() => {
-    const wrap = wrapRef.current;
-    const [imgA, imgB] = imgRefs.current;
-    if (!wrap || !imgA || !imgB || globeSize < 10) return;
+    const canvas = canvasRef.current;
+    if (!canvas || globeSize < 10) return;
 
-    // The globe holds a fixed front-facing pose (rotY=0, frame 0, matching
-    // the splash film's final frame) every time the page loads, and only
-    // moves if someone drags it.
-    const state = { rotY: 0, dragging: false, lastX: 0, frame: -1 };
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.z = CAMERA_Z;
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(globeSize, globeSize);
+
+    // Everything that spins lives under one group, so rotation applies the
+    // same way whether it's still the placeholder sphere or (once loaded)
+    // the real Blender mesh — no bookkeeping needed to carry rotation over
+    // when the swap happens.
+    const globeGroup = new THREE.Group();
+    scene.add(globeGroup);
+
+    // Plain-color placeholder, visible for the brief moment before the
+    // real mesh finishes loading, so the canvas is never blank.
+    const placeholderGeometry = new THREE.SphereGeometry(SPHERE_RADIUS, 48, 48);
+    const placeholderMaterial = new THREE.MeshBasicMaterial({ color: 0x1c3f63 });
+    const placeholder = new THREE.Mesh(placeholderGeometry, placeholderMaterial);
+    globeGroup.add(placeholder);
+
+    const gltfLoader = new GLTFLoader();
+    let loadedMesh: THREE.Object3D | null = null;
+    gltfLoader.load('/planetary_globe.glb', (gltf) => {
+      // Unlit, like the rest of this globe's look — the color texture
+      // already has its own shading painted in, and staying unlit means
+      // it reads the same bright, vivid way from every angle instead of
+      // rotating into a dim "night side" as someone drags it around.
+      gltf.scene.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const prevMaterial = child.material as THREE.MeshStandardMaterial;
+        const colorMap = prevMaterial?.map ?? null;
+        if (colorMap) {
+          if ('colorSpace' in colorMap) (colorMap as any).colorSpace = (THREE as any).SRGBColorSpace;
+          colorMap.needsUpdate = true;
+        }
+        child.material = new THREE.MeshBasicMaterial({ map: colorMap ?? undefined, color: 0xffffff });
+      });
+      gltf.scene.scale.setScalar(SPHERE_RADIUS);
+      globeGroup.remove(placeholder);
+      placeholderGeometry.dispose();
+      placeholderMaterial.dispose();
+      globeGroup.add(gltf.scene);
+      loadedMesh = gltf.scene;
+    });
+
+    // Fresnel-based atmosphere glow — bright at the grazing edge, transparent
+    // toward the center, like real atmospheric scattering.
+    const atmosphereGeometry = new THREE.SphereGeometry(SPHERE_RADIUS * 1.16, 64, 64);
+    const atmosphereMaterial = new THREE.ShaderMaterial({
+      uniforms: { glowColor: { value: new THREE.Color(0xe4b878) } },
+      vertexShader: `
+        varying vec3 vNormal;
+        varying vec3 vViewPos;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vViewPos = -mv.xyz;
+          gl_Position = projectionMatrix * mv;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vNormal;
+        varying vec3 vViewPos;
+        uniform vec3 glowColor;
+        void main() {
+          float intensity = pow(1.0 - max(dot(normalize(vNormal), normalize(vViewPos)), 0.0), 3.0);
+          gl_FragColor = vec4(glowColor, intensity * 0.9);
+        }
+      `,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+    });
+    scene.add(new THREE.Mesh(atmosphereGeometry, atmosphereMaterial));
+
+    // Soft outer nebula-colored halo behind everything.
+    const haloGeometry = new THREE.SphereGeometry(SPHERE_RADIUS * 1.3, 32, 32);
+    const haloMaterial = new THREE.MeshBasicMaterial({
+      color: 0xd9c39a,
+      transparent: true,
+      opacity: 0.08,
+      side: THREE.BackSide,
+      depthWrite: false,
+    });
+    scene.add(new THREE.Mesh(haloGeometry, haloMaterial));
+
+    const markerBase: Record<string, THREE.Vector3> = {};
+    bowlItems.forEach((item) => {
+      if (item.origin) {
+        markerBase[item.id] = latLongToVector3(item.origin.lat, item.origin.long, SPHERE_RADIUS + 0.015);
+      }
+    });
+
+    // The globe holds a fixed front-facing pose (rotY=0, rotX=0) every
+    // time the page loads, and only moves if someone drags it — free on
+    // both axes, so the poles are reachable, not just a left-right spin.
+    const state = { rotY: 0, rotX: 0, dragging: false, lastX: 0, lastY: 0 };
 
     const onPointerDown = (e: PointerEvent) => {
       state.dragging = true;
       state.lastX = e.clientX;
+      state.lastY = e.clientY;
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!state.dragging) return;
       const dx = e.clientX - state.lastX;
-      state.rotY += dx * DRAG_DEG_PER_PX;
+      const dy = e.clientY - state.lastY;
+      state.rotY += dx * 0.006;
+      state.rotX = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, state.rotX + dy * 0.006));
       state.lastX = e.clientX;
+      state.lastY = e.clientY;
     };
     const onPointerUp = () => {
       state.dragging = false;
-      wrap.style.cursor = 'grab';
+      canvas.style.cursor = 'grab';
     };
 
-    wrap.style.cursor = 'grab';
-    wrap.addEventListener('pointerdown', onPointerDown);
+    canvas.style.cursor = 'grab';
+    canvas.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 
     let raf = 0;
     const animate = () => {
-      const desiredFrame = Math.round(state.rotY / FRAME_STEP_DEG);
-      const wrappedFrame = ((desiredFrame % FRAME_COUNT) + FRAME_COUNT) % FRAME_COUNT;
-      if (wrappedFrame !== state.frame) {
-        state.frame = wrappedFrame;
-        // Load the new frame into the currently-hidden layer, then swap
-        // which layer is on top — the CSS opacity transition on each
-        // layer (see render below) does the actual crossfade.
-        const nextLayer = activeLayerRef.current === 0 ? 1 : 0;
-        const incoming = nextLayer === 0 ? imgA : imgB;
-        const outgoing = nextLayer === 0 ? imgB : imgA;
-        incoming.src = frameUrl(wrappedFrame);
-        incoming.style.opacity = '1';
-        outgoing.style.opacity = '0';
-        activeLayerRef.current = nextLayer;
-      }
+      globeGroup.rotation.y = state.rotY;
+      globeGroup.rotation.x = state.rotX;
+      globeGroup.updateMatrixWorld();
 
-      const pulse = 1 + Math.sin(performance.now() * 0.003) * 0.12;
+      const pulse = 1 + Math.sin(performance.now() * 0.003) * 0.1;
 
       bowlItems.forEach((item) => {
-        if (!item.origin) return;
+        const base = markerBase[item.id];
         const el = markerRefs.current[item.id] as unknown as HTMLElement | null;
-        if (!el) return;
-        const { x, y, facing } = projectPin(item.origin.lat, item.origin.long, state.rotY);
-        const screenX = (x / 100) * globeSize;
-        const screenY = (y / 100) * globeSize;
-        const visible = facing > 0.05;
-        const depth = Math.max(0, Math.min(1, facing));
-        const opacity = visible ? 0.4 + depth * 0.6 : 0;
+        if (!base || !el) return;
+        const world = base.clone().applyMatrix4(globeGroup.matrixWorld);
+        const facing = world.z > 0.05;
+        const depth = Math.max(0, Math.min(1, world.z / SPHERE_RADIUS));
+        const projected = world.clone().project(camera);
+        const screenX = (projected.x * 0.5 + 0.5) * globeSize;
+        const screenY = (1 - (projected.y * 0.5 + 0.5)) * globeSize;
+        const opacity = facing ? 0.45 + depth * 0.55 : 0;
 
-        // Ease this pin's hover scale toward 1.5x when hovered, 1x
-        // otherwise — a spring-like pop rather than an instant snap.
-        const hoverTarget = hoveredIdRef.current === item.id ? 1.5 : 1;
+        // Ease this label's hover scale toward a gentle pop when hovered,
+        // 1x otherwise — a spring-like pop rather than an instant snap.
+        const hoverTarget = hoveredIdRef.current === item.id ? 1.18 : 1;
         const currentHover = hoverScaleRef.current[item.id] ?? 1;
         const nextHover = currentHover + (hoverTarget - currentHover) * 0.25;
         hoverScaleRef.current[item.id] = nextHover;
 
-        const scale = (0.6 + depth * 0.5) * pulse * nextHover;
+        const scale = (0.75 + depth * 0.35) * pulse * nextHover;
         el.style.transform = `translate(${screenX}px, ${screenY}px) translate(-50%, -50%) scale(${scale})`;
         el.style.opacity = String(opacity);
-        el.style.pointerEvents = visible ? 'auto' : 'none';
+        el.style.pointerEvents = facing ? 'auto' : 'none';
         el.style.zIndex = String(Math.round(depth * 1000) + (hoveredIdRef.current === item.id ? 2000 : 0));
       });
 
+      renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
     };
     raf = requestAnimationFrame(animate);
 
     return () => {
       cancelAnimationFrame(raf);
-      wrap.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      renderer.dispose();
+      placeholderGeometry.dispose();
+      placeholderMaterial.dispose();
+      atmosphereGeometry.dispose();
+      atmosphereMaterial.dispose();
+      haloGeometry.dispose();
+      haloMaterial.dispose();
+      if (loadedMesh) {
+        loadedMesh.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            (child.material as THREE.MeshBasicMaterial)?.map?.dispose();
+            (child.material as THREE.Material)?.dispose();
+          }
+        });
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globeSize]);
@@ -381,8 +401,6 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           bowl pop-out replaces just this area, not the whole screen. */}
       <View style={{ alignItems: 'center', position: 'relative' }}>
         <View
-          // @ts-expect-error ref typed for RN View, used here as a plain div
-          ref={wrapRef}
           style={{
             width: globeSize,
             height: globeSize,
@@ -394,39 +412,16 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
             opacity: activeBowlId ? 0 : 1,
           }}
         >
-          {/* eslint-disable-next-line jsx-a11y/alt-text */}
-          <img
-            ref={(node) => {
-              imgRefs.current[0] = node;
-            }}
-            src={frameUrl(0)}
-            draggable={false}
+          <CanvasEl
+            id="planetary-eats-live-globe"
+            ref={canvasRef}
+            width={globeSize}
+            height={globeSize}
             style={{
-              position: 'absolute',
               width: globeSize,
               height: globeSize,
+              borderRadius: globeSize,
               touchAction: 'none',
-              userSelect: 'none',
-              opacity: 1,
-              transition: 'opacity 140ms ease-out',
-              filter: 'drop-shadow(0 18px 40px rgba(58,46,30,0.28))',
-            }}
-          />
-          {/* eslint-disable-next-line jsx-a11y/alt-text */}
-          <img
-            ref={(node) => {
-              imgRefs.current[1] = node;
-            }}
-            src={frameUrl(0)}
-            draggable={false}
-            style={{
-              position: 'absolute',
-              width: globeSize,
-              height: globeSize,
-              touchAction: 'none',
-              userSelect: 'none',
-              opacity: 0,
-              transition: 'opacity 140ms ease-out',
               filter: 'drop-shadow(0 18px 40px rgba(58,46,30,0.28))',
             }}
           />
@@ -437,13 +432,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
               ref={(node) => {
                 markerRefs.current[item.id] = node;
               }}
-              style={{ position: 'absolute', left: 0, top: 0, alignItems: 'center' }}
+              style={{ position: 'absolute', left: 0, top: 0 }}
             >
-              {/* The country's name, not the dish photo — tapping it opens
-                  the same bowl card as before. Pops in staggered per pin
-                  so the globe doesn't pop in unison, and keeps breathing
-                  gently via the same pulse/hover scale every other pin
-                  style used. */}
               <Pressable
                 onPress={() => setActiveBowlId(item.id)}
                 onHoverIn={() => {
@@ -452,20 +442,19 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
                 onHoverOut={() => {
                   if (hoveredIdRef.current === item.id) hoveredIdRef.current = null;
                 }}
+                hitSlop={10}
                 style={[
-                  styles.countryPin,
+                  styles.labelHit,
                   {
-                    animationName: 'planetary-eats-flag-pop',
+                    animationName: 'planetary-eats-label-pop',
                     animationDuration: '0.5s',
                     animationDelay: `${(index % 6) * 0.08}s`,
                     animationFillMode: 'backwards',
                     animationTimingFunction: 'ease-out',
                   } as any,
                 ]}
-                hitSlop={10}
               >
-                {item.origin?.flag && <Text style={styles.countryPinFlag}>{item.origin.flag}</Text>}
-                <Text style={styles.countryPinText} numberOfLines={1}>
+                <Text style={styles.countryLabel} numberOfLines={1}>
                   {item.origin?.country}
                 </Text>
               </Pressable>
@@ -514,31 +503,19 @@ const styles = {
     textAlign: 'center' as const,
     fontFamily: fonts.body,
   },
-  countryPin: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 5,
+  labelHit: {
     paddingVertical: 6,
-    paddingHorizontal: 11,
-    borderRadius: radii.pill,
-    backgroundColor: colors.card,
-    borderWidth: 1.5,
-    borderColor: colors.sun,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.22,
-    shadowRadius: 5,
+    paddingHorizontal: 4,
     cursor: 'pointer' as const,
   },
-  countryPinFlag: {
-    fontSize: 13,
-    lineHeight: 15,
-  },
-  countryPinText: {
-    fontSize: 12,
-    fontWeight: '700' as const,
-    color: colors.ink,
+  countryLabel: {
+    fontSize: 15,
+    fontWeight: '800' as const,
+    color: '#FFFFFF',
     fontFamily: fonts.body,
-    whiteSpace: 'nowrap' as const,
+    letterSpacing: 0.3,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
 };
