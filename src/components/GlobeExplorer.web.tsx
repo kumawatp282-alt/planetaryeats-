@@ -1,12 +1,12 @@
 // Real Earth (web only) — the actual Blender-rendered globe (72 frames, a
-// full 360° turntable at 5° steps, from supabase/../design assets),
-// displayed as a swapped image rather than a live WebGL mesh. Dragging
-// horizontally scrubs through the frames; pins are positioned with plain
-// trig that reproduces the exact camera this globe was rendered with
-// (see PROJECTION NOTES below), so they track the artwork precisely. No
+// full 360° turntable at 5° steps), displayed as two crossfaded images
+// rather than a live WebGL mesh (crossfading hides the "snap" between the
+// 72 discrete frames while dragging). Pins are positioned with plain trig
+// that reproduces the exact camera this globe was rendered with (see
+// PROJECTION NOTES below), so they track the artwork precisely. No
 // pitch-drag and no zoom — the render only exists at one fixed tilt and
-// distance. Each bowl is a real photo pinned to its country; tapping one
-// pops the bowl out full-circle over the globe.
+// distance. Each pin is the country's name, not a dish photo — tapping
+// one pops the bowl out full-circle over the globe.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 import { MenuItem } from '../data/menu';
@@ -179,7 +179,12 @@ function usePreloadFrames() {
 export default function GlobeExplorer({ items, onSelect }: Props) {
   const [globeSize, setGlobeSize] = useState(320);
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
-  const imgRef = useRef<HTMLImageElement | null>(null);
+  // Two stacked layers, crossfaded on every frame change — scrubbing
+  // through 72 discrete frames would otherwise "snap" between them;
+  // fading the incoming frame in while the outgoing one fades out reads
+  // as a continuous spin instead of a slideshow.
+  const imgRefs = useRef<[HTMLImageElement | null, HTMLImageElement | null]>([null, null]);
+  const activeLayerRef = useRef<0 | 1>(0);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const markerRefs = useRef<Record<string, View | null>>({});
   // Cursor-hover zoom on pins — read/written every frame in the imperative
@@ -193,7 +198,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
 
   useEffect(() => {
     function updateSize() {
-      setGlobeSize(Math.min(window.innerWidth * 0.85, window.innerHeight * 0.5, 480));
+      setGlobeSize(Math.min(window.innerWidth * 0.92, window.innerHeight * 0.64, 620));
     }
     updateSize();
     window.addEventListener('resize', updateSize);
@@ -204,8 +209,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
 
   useEffect(() => {
     const wrap = wrapRef.current;
-    const img = imgRef.current;
-    if (!wrap || !img || globeSize < 10) return;
+    const [imgA, imgB] = imgRefs.current;
+    if (!wrap || !imgA || !imgB || globeSize < 10) return;
 
     // The globe holds a fixed front-facing pose (rotY=0, frame 0, matching
     // the splash film's final frame) every time the page loads, and only
@@ -238,7 +243,16 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       const wrappedFrame = ((desiredFrame % FRAME_COUNT) + FRAME_COUNT) % FRAME_COUNT;
       if (wrappedFrame !== state.frame) {
         state.frame = wrappedFrame;
-        img.src = frameUrl(wrappedFrame);
+        // Load the new frame into the currently-hidden layer, then swap
+        // which layer is on top — the CSS opacity transition on each
+        // layer (see render below) does the actual crossfade.
+        const nextLayer = activeLayerRef.current === 0 ? 1 : 0;
+        const incoming = nextLayer === 0 ? imgA : imgB;
+        const outgoing = nextLayer === 0 ? imgB : imgA;
+        incoming.src = frameUrl(wrappedFrame);
+        incoming.style.opacity = '1';
+        outgoing.style.opacity = '0';
+        activeLayerRef.current = nextLayer;
       }
 
       const pulse = 1 + Math.sin(performance.now() * 0.003) * 0.12;
@@ -382,14 +396,37 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         >
           {/* eslint-disable-next-line jsx-a11y/alt-text */}
           <img
-            ref={imgRef}
+            ref={(node) => {
+              imgRefs.current[0] = node;
+            }}
             src={frameUrl(0)}
             draggable={false}
             style={{
+              position: 'absolute',
               width: globeSize,
               height: globeSize,
               touchAction: 'none',
               userSelect: 'none',
+              opacity: 1,
+              transition: 'opacity 140ms ease-out',
+              filter: 'drop-shadow(0 18px 40px rgba(58,46,30,0.28))',
+            }}
+          />
+          {/* eslint-disable-next-line jsx-a11y/alt-text */}
+          <img
+            ref={(node) => {
+              imgRefs.current[1] = node;
+            }}
+            src={frameUrl(0)}
+            draggable={false}
+            style={{
+              position: 'absolute',
+              width: globeSize,
+              height: globeSize,
+              touchAction: 'none',
+              userSelect: 'none',
+              opacity: 0,
+              transition: 'opacity 140ms ease-out',
               filter: 'drop-shadow(0 18px 40px rgba(58,46,30,0.28))',
             }}
           />
@@ -402,77 +439,42 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
               }}
               style={{ position: 'absolute', left: 0, top: 0, alignItems: 'center' }}
             >
-              {/* Expanding ring — a "here's a bowl" signal you can spot
-                  before you even recognize the photo, staggered per pin so
-                  the globe doesn't pulse in unison. */}
-              <View
-                pointerEvents="none"
+              {/* The country's name, not the dish photo — tapping it opens
+                  the same bowl card as before. Pops in staggered per pin
+                  so the globe doesn't pop in unison, and keeps breathing
+                  gently via the same pulse/hover scale every other pin
+                  style used. */}
+              <Pressable
+                onPress={() => setActiveBowlId(item.id)}
+                onHoverIn={() => {
+                  hoveredIdRef.current = item.id;
+                }}
+                onHoverOut={() => {
+                  if (hoveredIdRef.current === item.id) hoveredIdRef.current = null;
+                }}
                 style={[
-                  styles.pinRing,
+                  styles.countryPin,
                   {
-                    animationName: 'planetary-eats-pin-ring',
-                    animationDuration: '2.6s',
-                    animationDelay: `${(index % 6) * 0.35}s`,
-                    animationIterationCount: 'infinite',
+                    animationName: 'planetary-eats-flag-pop',
+                    animationDuration: '0.5s',
+                    animationDelay: `${(index % 6) * 0.08}s`,
+                    animationFillMode: 'backwards',
                     animationTimingFunction: 'ease-out',
                   } as any,
                 ]}
-              />
-
-              {item.dishImage ? (
-                <Pressable
-                  onPress={() => setActiveBowlId(item.id)}
-                  onHoverIn={() => {
-                    hoveredIdRef.current = item.id;
-                  }}
-                  onHoverOut={() => {
-                    if (hoveredIdRef.current === item.id) hoveredIdRef.current = null;
-                  }}
-                  style={styles.dishPin}
-                  hitSlop={12}
-                >
-                  <Image source={item.dishImage} style={styles.dishPinImage} resizeMode="cover" />
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={() => setActiveBowlId(item.id)}
-                  onHoverIn={() => {
-                    hoveredIdRef.current = item.id;
-                  }}
-                  onHoverOut={() => {
-                    if (hoveredIdRef.current === item.id) hoveredIdRef.current = null;
-                  }}
-                  style={styles.dot}
-                  hitSlop={12}
-                />
-              )}
-
-              {/* Flag badge — so you know which country this is without
-                  tapping. Always visible, sits on the same transformed
-                  wrapper so it tracks the pin as the globe spins. */}
-              {item.origin?.flag && (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.flagBadge,
-                    {
-                      animationName: 'planetary-eats-flag-pop',
-                      animationDuration: '0.5s',
-                      animationDelay: `${0.4 + (index % 6) * 0.08}s`,
-                      animationFillMode: 'backwards',
-                      animationTimingFunction: 'ease-out',
-                    } as any,
-                  ]}
-                >
-                  <Text style={styles.flagBadgeText}>{item.origin.flag}</Text>
-                </View>
-              )}
+                hitSlop={10}
+              >
+                {item.origin?.flag && <Text style={styles.countryPinFlag}>{item.origin.flag}</Text>}
+                <Text style={styles.countryPinText} numberOfLines={1}>
+                  {item.origin?.country}
+                </Text>
+              </Pressable>
             </View>
           ))}
         </View>
 
         <Text style={[styles.hint, activeBowlId ? { opacity: 0 } : null]}>
-          Drag to spin · tap a bowl to explore
+          Drag to spin · tap a country to explore
         </Text>
 
         <BowlPopModal
@@ -512,62 +514,31 @@ const styles = {
     textAlign: 'center' as const,
     fontFamily: fonts.body,
   },
-  dot: {
-    width: 14,
-    height: 14,
+  countryPin: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 11,
     borderRadius: radii.pill,
-    backgroundColor: colors.sun,
-    borderWidth: 2,
-    borderColor: colors.card,
-  },
-  dishPin: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 2,
-    borderColor: colors.sun,
-    overflow: 'hidden' as const,
-    backgroundColor: colors.card,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-  },
-  dishPinImage: {
-    width: '100%' as const,
-    height: '100%' as const,
-  },
-  pinRing: {
-    position: 'absolute' as const,
-    top: '50%' as const,
-    left: '50%' as const,
-    width: 44,
-    height: 44,
-    marginLeft: -22,
-    marginTop: -22,
-    borderRadius: 22,
-    borderWidth: 2,
-    borderColor: colors.sun,
-  },
-  flagBadge: {
-    position: 'absolute' as const,
-    right: -6,
-    bottom: -4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
     backgroundColor: colors.card,
     borderWidth: 1.5,
-    borderColor: colors.card,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
+    borderColor: colors.sun,
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
+    cursor: 'pointer' as const,
   },
-  flagBadgeText: {
-    fontSize: 11,
-    lineHeight: 13,
+  countryPinFlag: {
+    fontSize: 13,
+    lineHeight: 15,
+  },
+  countryPinText: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    color: colors.ink,
+    fontFamily: fonts.body,
+    whiteSpace: 'nowrap' as const,
   },
 };
