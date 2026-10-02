@@ -1,7 +1,7 @@
 // Persistent top bar, shown above every screen (wired in app/_layout.tsx):
 // back/brand, delivery address, Delivery/Collection toggle, language, menu.
-import React, { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../context/StoreContext';
@@ -10,7 +10,8 @@ import { getOpenStatus } from '../lib/openingHours';
 import AddressModal from './AddressModal';
 import NavMenu from './NavMenu';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoImage = require('../assets/planetary-eats-logo-white.png');
+const logoWide = require('../assets/logo-horizontal.png'); // leaves + PLANETARY EATS on one line
+const logoMark = require('../assets/logo-mark.png'); // just the leaves, for narrow screens
 
 const PAGE_TITLES: Record<string, string> = {
   '/cart': 'Your cart',
@@ -28,6 +29,12 @@ const PAGE_TITLES: Record<string, string> = {
 export default function AppHeader() {
   const router = useRouter();
   const pathname = usePathname();
+  const { width } = useWindowDimensions();
+  // The static (server-rendered) page doesn't know the screen width, so the one-line
+  // logo is only chosen once mounted — keeps image and size in step on hydration.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const wide = mounted && width >= 760;
   const { fulfillmentMethod, setFulfillmentMethod, deliveryAddress, appSettings } = useStore();
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [navVisible, setNavVisible] = useState(false);
@@ -59,8 +66,8 @@ export default function AppHeader() {
         )}
         <Pressable onPress={() => router.push('/')} style={styles.brandWrap}>
           <Image
-            source={logoImage}
-            style={styles.brandLogo}
+            source={wide ? logoWide : logoMark}
+            style={wide ? styles.brandLogoWide : styles.brandLogoMark}
             resizeMode="contain"
             accessibilityLabel="Planetary Eats"
           />
@@ -171,11 +178,13 @@ const styles = StyleSheet.create({
   brandWrap: {
     marginLeft: 2,
   },
-  brandLogo: {
-    width: 44,
-    height: 28,
-    // White wordmark on transparent (derived from the original, which is a
-    // black wordmark on an opaque white square) so it sits on the black header.
+  brandLogoWide: {
+    width: 172,
+    height: 19, // 1000 x 108 artwork
+  },
+  brandLogoMark: {
+    width: 34,
+    height: 26, // 256 x 193 artwork
   },
   pageTitleText: {
     fontSize: 11,

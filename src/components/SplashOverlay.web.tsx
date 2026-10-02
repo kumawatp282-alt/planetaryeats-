@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoImage = require('../assets/planetary-eats-logo-white.png');
+const logoImage = require('../assets/logo-stacked.png');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const indianDish = require('../assets/dishes/indian-butter-masala-bowl.jpg');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   logo: {
-    width: 300,
-    height: 205,
+    width: 320,
+    height: 168, // 800 x 419 artwork
   },
 });

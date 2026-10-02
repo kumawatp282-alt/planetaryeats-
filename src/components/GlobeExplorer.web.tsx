@@ -33,7 +33,7 @@ import BowlPopModal from './BowlPopModal';
 import { loadGlobeAssets, makeCloudMaterial, makeEarthMaterial, makeTreeMaterial, shadowUniforms } from './globeShading';
 import { Life, loadLife } from './globeLife';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoWhiteImage = require('../assets/planetary-eats-logo-white.png');
+const logoImage = require('../assets/logo-stacked.png');
 
 interface Props {
   items: MenuItem[]; // must have `origin` set
@@ -79,13 +79,20 @@ function cloudAngle(frame: number): number {
   return CLOUD_DRIFT_RADIANS * (3 * t * t - 2 * t * t * t);
 }
 
-// Country names that swing round to face the viewer grow a little, so whichever
-// name is in front is the easiest to read while ones near the edge stay small.
-// 0 = label at the limb or beyond, 1 = dead centre; eased in between.
-const LABEL_FRONT_BOOST = 0.45; // up to 1.45x when facing the viewer squarely
-function frontEmphasis(faceDot: number): number {
-  const t = Math.max(0, Math.min(1, (faceDot - 0.55) / (0.95 - 0.55)));
-  return 1 + LABEL_FRONT_BOOST * t * t * (3 - 2 * t);
+// Country names that swing round to face the viewer pop out, so whichever name is
+// in front is easy to read and tap, and ones near the edge stay small.
+//  - every name facing roughly toward the viewer swells a little;
+//  - the single front-most name (the one nearest the middle) swells a lot more, so
+//    a cluster such as Germany / Italy / Greece never balloons into one blob;
+//  - the size is a spring, so a name that arrives at the front overshoots slightly
+//    and settles — a "pop" — rather than just sliding up.
+const LABEL_FACING_BOOST = 0.3; // up to 1.3x for any name facing the viewer
+const LABEL_LEADER_BOOST = 0.6; // up to 1.9x for the one at the front
+const LABEL_SPRING_STIFFNESS = 170;
+const LABEL_SPRING_DAMPING = 14;
+function smoothstep(lo: number, hi: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
+  return t * t * (3 - 2 * t);
 }
 
 // Matches a menu item's origin.country ("West Africa") to its real label
@@ -148,6 +155,7 @@ function useTwinkleKeyframes() {
 
 export default function GlobeExplorer({ items, onSelect }: Props) {
   const [globeSize, setGlobeSize] = useState(320);
+  const [logoHeight, setLogoHeight] = useState(84);
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const markerRefs = useRef<Record<string, View | null>>({});
@@ -156,12 +164,17 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
   // trigger a React re-render 60x/sec).
   const hoveredIdRef = useRef<string | null>(null);
   const hoverScaleRef = useRef<Record<string, number>>({});
+  // Per-label spring (size, velocity) for the pop when a name reaches the front.
+  const popRef = useRef<Record<string, { x: number; v: number }>>({});
   const stars = useStarfield(50);
   useTwinkleKeyframes();
 
   useEffect(() => {
     function updateSize() {
-      setGlobeSize(Math.min(window.innerWidth * 0.95, window.innerHeight * 0.72, 760));
+      setGlobeSize(Math.min(window.innerWidth * 0.95, window.innerHeight * 0.66, 760));
+      // The logo scales with the window's height so the globe and the hint below
+      // it always fit (stacked artwork is 800 x 419).
+      setLogoHeight(Math.max(60, Math.min(96, (window.innerHeight - 48) * 0.12)));
     }
     updateSize();
     window.addEventListener('resize', updateSize);
@@ -340,7 +353,10 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       .then(([gltf, assets]) => {
         if (disposed) return;
         gltf.scene.traverse((child) => {
-          if (child instanceof THREE.Mesh) child.material = makeEarthMaterial(assets, INV_SCALE);
+          if (child instanceof THREE.Mesh) {
+            child.material = makeEarthMaterial(assets, INV_SCALE);
+            child.layers.enable(1); // the terrain shades itself — the Himalayas now cast real shadows
+          }
         });
         gltf.scene.scale.setScalar(SPHERE_RADIUS);
         gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
@@ -527,6 +543,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
 
     let raf = 0;
     const startedAt = performance.now();
+    let lastLabelTick = startedAt;
     const animate = () => {
       // The scene's timeline: frame 1 at load, advancing at the scene's fps.
       // (?globedebug can pin it to a given frame for comparison renders.)
@@ -542,6 +559,22 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         globeGroup.rotation.x = state.rotX;
       }
       globeGroup.updateMatrixWorld();
+
+      const nowMs = performance.now();
+      const dt = Math.min(0.05, Math.max(0.001, (nowMs - lastLabelTick) / 1000));
+      lastLabelTick = nowMs;
+      // How squarely each label faces the camera (1 = dead-on, 0 = on the limb),
+      // and which one is furthest to the front.
+      const faceDots: Record<string, number> = {};
+      let leaderDot = -1;
+      bowlItems.forEach((item) => {
+        const base = markerBase[item.id];
+        if (!base) return;
+        const w = base.clone().applyMatrix4(globeGroup.matrixWorld);
+        const d = w.clone().normalize().dot(camera.position.clone().sub(w).normalize());
+        faceDots[item.id] = d;
+        if (d > leaderDot) leaderDot = d;
+      });
 
       bowlItems.forEach((item) => {
         const base = markerBase[item.id];
@@ -565,7 +598,17 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const nextHover = currentHover + (hoverTarget - currentHover) * 0.25;
         hoverScaleRef.current[item.id] = nextHover;
         // (a pinned ?globedebug pose is for like-for-like comparison with Blender renders, so no emphasis)
-        const emphasis = state.override ? 1 : frontEmphasis(faceDot);
+        let emphasis = 1;
+        if (!state.override) {
+          const facingAmt = smoothstep(0.5, 0.9, faceDot);
+          const leads = smoothstep(leaderDot - 0.07, leaderDot, faceDot);
+          const target = 1 + LABEL_FACING_BOOST * facingAmt + LABEL_LEADER_BOOST * facingAmt * leads;
+          const spring = popRef.current[item.id] ?? { x: 1, v: 0 };
+          spring.v += (LABEL_SPRING_STIFFNESS * (target - spring.x) - LABEL_SPRING_DAMPING * spring.v) * dt;
+          spring.x += spring.v * dt;
+          popRef.current[item.id] = spring;
+          emphasis = Math.max(0.9, spring.x);
+        }
 
         if (item.origin) {
           const pivot = labelPivots[nameKeyFor(item.origin.country)];
@@ -674,12 +717,9 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           no scrolling" actually needs. */}
       {!activeBowlId && (
         <>
-          {/* White-on-transparent artwork (derived from the original logo) for
-              the black background; the original is black on white and relied
-              on a multiply blend to melt into a light page. */}
           <Image
-            source={logoWhiteImage}
-            style={styles.brandLogo}
+            source={logoImage}
+            style={{ width: (logoHeight * 800) / 419, height: logoHeight }}
             resizeMode="contain"
             accessibilityLabel="Planetary Eats"
           />
@@ -774,14 +814,10 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
 }
 
 const styles = {
-  brandLogo: {
-    width: 220,
-    height: 68,
-  },
   tagline: {
     fontSize: 15,
     color: colors.inkMuted,
-    marginTop: 2,
+    marginTop: 10,
     marginBottom: spacing.md,
     fontFamily: fonts.body,
   },

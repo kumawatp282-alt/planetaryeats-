@@ -31,7 +31,7 @@ function KioskHeadTags() {
       <meta name="mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       <meta name="apple-mobile-web-app-title" content="Order Kiosk" />
-      <link rel="apple-touch-icon" href="/planetary-eats-logo.png" />
+      <link rel="apple-touch-icon" href="/planetary-eats-icon.png" />
     </Head>
   );
 }
@@ -352,7 +352,7 @@ function IdleScreen({ onStart, promoImageUrl }: { onStart: () => void; promoImag
     <Pressable style={styles.idleScreen} onPress={onStart}>
       <View style={styles.poweredByTop}>
         <Image
-          source={require('../assets/planetary-eats-logo.png')}
+          source={require('../assets/logo-stacked.png')}
           style={styles.poweredByLogo}
           resizeMode="contain"
         />
@@ -899,8 +899,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   poweredByLogo: {
-    width: 90,
-    height: 90,
+    width: 170,
+    height: 89, // 800 x 419 artwork
   },
   poweredByText: {
     marginTop: -spacing.sm,
