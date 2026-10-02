@@ -591,7 +591,7 @@ export default function MenuItemEditorModal({ visible, item, onClose, onSaved, d
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </Pressable>
               <Pressable style={styles.saveButton} onPress={handleSave} disabled={saving}>
-                {saving ? <ActivityIndicator color={colors.white} /> : <Text style={styles.saveButtonText}>Save dish</Text>}
+                {saving ? <ActivityIndicator color={colors.onPrimary} /> : <Text style={styles.saveButtonText}>Save dish</Text>}
               </Pressable>
             </View>
           </ScrollView>
@@ -673,7 +673,7 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   pillTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   chipRow: {
     flexDirection: 'row',
@@ -707,7 +707,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.danger,
   },
   smallButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -792,7 +792,7 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   checkboxMark: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -834,7 +834,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.forest,
   },
   saveButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },

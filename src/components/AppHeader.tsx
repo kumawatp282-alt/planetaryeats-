@@ -10,7 +10,7 @@ import { getOpenStatus } from '../lib/openingHours';
 import AddressModal from './AddressModal';
 import NavMenu from './NavMenu';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoImage = require('../assets/planetary-eats-logo.png');
+const logoImage = require('../assets/planetary-eats-logo-white.png');
 
 const PAGE_TITLES: Record<string, string> = {
   '/cart': 'Your cart',
@@ -90,7 +90,7 @@ export default function AppHeader() {
           <Ionicons
             name="bicycle-outline"
             size={14}
-            color={fulfillmentMethod === 'delivery' ? colors.white : colors.inkMuted}
+            color={fulfillmentMethod === 'delivery' ? colors.onPrimary : colors.inkMuted}
           />
           <Text style={[styles.methodOptionText, fulfillmentMethod === 'delivery' && styles.methodOptionTextActive]}>
             Delivery
@@ -103,7 +103,7 @@ export default function AppHeader() {
           <Ionicons
             name="storefront-outline"
             size={14}
-            color={fulfillmentMethod === 'pickup' ? colors.white : colors.inkMuted}
+            color={fulfillmentMethod === 'pickup' ? colors.onPrimary : colors.inkMuted}
           />
           <Text style={[styles.methodOptionText, fulfillmentMethod === 'pickup' && styles.methodOptionTextActive]}>
             Collection
@@ -174,10 +174,8 @@ const styles = StyleSheet.create({
   brandLogo: {
     width: 44,
     height: 28,
-    // The source image is a black wordmark on an opaque white square —
-    // multiply blend drops the white out so it reads as transparent
-    // against the header's own background, whatever shade that is.
-    mixBlendMode: 'multiply',
+    // White wordmark on transparent (derived from the original, which is a
+    // black wordmark on an opaque white square) so it sits on the black header.
   },
   pageTitleText: {
     fontSize: 11,
@@ -243,7 +241,7 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   methodOptionTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   rightGroup: {
     flexDirection: 'row',

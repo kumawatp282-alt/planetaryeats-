@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   cartBadgeText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 11,
     fontWeight: '700',
   },

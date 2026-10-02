@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   chipTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   addOnRow: {
     flexDirection: 'row',
@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   checkboxMark: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 14,
   },
@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   addButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 16,
   },

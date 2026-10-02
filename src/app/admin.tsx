@@ -1009,7 +1009,7 @@ function InventorySection() {
 
   const outOfStockCount = items.filter((i) => i.currentStock <= 0).length;
 
-  const CATEGORY_COLORS = ['#1A1A1A', '#404040', '#595959', '#6B6B6B', '#8A8A8A', '#A6A6A6', '#C2C2C2'];
+  const CATEGORY_COLORS = ['#F2F2F2', '#D9D9D9', '#BFBFBF', '#A6A6A6', '#8C8C8C', '#737373', '#595959'];
   const categoryCounts = new Map<string, number>();
   items.forEach((i) => categoryCounts.set(i.category, (categoryCounts.get(i.category) ?? 0) + 1));
   const categorySegments = Array.from(categoryCounts.entries())
@@ -4124,7 +4124,7 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   tabTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   sectionContent: {
     paddingBottom: spacing.xl,
@@ -4170,7 +4170,7 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   chipTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   pillRow: {
     flexDirection: 'row',
@@ -4206,7 +4206,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   smallButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -4218,7 +4218,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },
@@ -4256,7 +4256,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   adminBadgeText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 10,
     fontWeight: '700',
   },
@@ -4267,7 +4267,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   bannedBadgeText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 10,
     fontWeight: '700',
   },
@@ -4329,7 +4329,7 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   lowBadgeText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 10,
     fontWeight: '700',
   },
@@ -4392,7 +4392,7 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   subTabTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   checkRow: {
     flexDirection: 'row',
@@ -4418,7 +4418,7 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   checkboxMark: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 13,
     fontWeight: '700',
   },

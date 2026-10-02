@@ -39,6 +39,6 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   labelActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
 });

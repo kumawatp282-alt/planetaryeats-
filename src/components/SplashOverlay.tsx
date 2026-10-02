@@ -12,7 +12,7 @@ import { colors } from '../constants/theme';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const earthTextureModule = require('../assets/earth.jpg');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoImage = require('../assets/planetary-eats-logo.png');
+const logoImage = require('../assets/planetary-eats-logo-white.png');
 
 const HOLD_MS = 3200;
 const EXIT_MS = 700;

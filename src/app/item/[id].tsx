@@ -415,7 +415,7 @@ const styles = StyleSheet.create({
     color: colors.ink,
   },
   optionTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   addOnList: {
     marginTop: spacing.sm,
@@ -450,7 +450,7 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   checkboxMark: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -545,7 +545,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   addText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },

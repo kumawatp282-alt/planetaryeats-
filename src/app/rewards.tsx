@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   stampCheck: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 13,
   },

@@ -839,7 +839,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
   idlePromoTapText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 20,
     fontWeight: '700',
   },
@@ -1060,7 +1060,7 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   addBadgeText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontSize: 22,
     fontWeight: '700',
     marginTop: -2,
@@ -1121,7 +1121,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
   tileLabelOnPhoto: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   popularRow: {
     flexDirection: 'row',
@@ -1171,7 +1171,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   bottomBarPrimaryText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 16,
   },
@@ -1245,7 +1245,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.danger,
   },
   codeButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },
@@ -1282,7 +1282,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   primaryButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 17,
   },

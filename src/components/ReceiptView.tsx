@@ -136,7 +136,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   printButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 13,
   },

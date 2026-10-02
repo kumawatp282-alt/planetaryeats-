@@ -48,7 +48,7 @@ export default function ProfileScreen() {
     <View style={styles.screen}>
       <View style={styles.headerCard}>
         <View style={styles.avatar}>
-          <Ionicons name="person" size={28} color={colors.white} />
+          <Ionicons name="person" size={28} color={colors.onPrimary} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={typography.h3}>{user.email}</Text>

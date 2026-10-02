@@ -65,7 +65,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   primaryText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },

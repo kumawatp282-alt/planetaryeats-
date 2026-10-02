@@ -414,7 +414,7 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   methodTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   field: {
     marginBottom: spacing.md,
@@ -435,7 +435,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
   },
   checkButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -506,7 +506,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   paymentOptionTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   promoRow: {
     flexDirection: 'row',
@@ -524,7 +524,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
   },
   promoButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -555,7 +555,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   voucherTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   summaryCard: {
     backgroundColor: colors.card,
@@ -585,7 +585,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   placeText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },

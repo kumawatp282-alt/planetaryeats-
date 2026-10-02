@@ -31,6 +31,7 @@ import { MenuItem } from '../data/menu';
 import { colors, fonts, spacing } from '../constants/theme';
 import BowlPopModal from './BowlPopModal';
 import { loadGlobeAssets, makeCloudMaterial, makeEarthMaterial, makeTreeMaterial } from './globeShading';
+import { Life, loadLife } from './globeLife';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logoWhiteImage = require('../assets/planetary-eats-logo-white.png');
 
@@ -62,6 +63,30 @@ const PITCH_LIMIT = 1.45;
 // (checked by fitting the ten label centroids in both frames: exact to 1e-6),
 // so no extra correction is applied to any layer.
 const MESH_AXIS_CORRECTION = 0;
+
+// The scene's timeline. Everything that moves (the flocks, wing beats, whale
+// tails, the cloud drift) is a function of the frame number, exactly as in the
+// .blend; the page just plays it in real time at the scene's frame rate,
+// starting from frame 1.
+const CLOUD_DRIFT_END_FRAME = 240; // CloudsAction: keyed on frames 1 and 240
+const CLOUD_DRIFT_RADIANS = 0.5235987901687622; // 30 degrees about the polar axis
+// The cloud-alpha cube was captured with the clouds at the start of that drift
+// (rotation 0), so the drifted pattern is a lookup rotated by the angle so far.
+const CLOUD_CAPTURE_ANGLE = 0;
+function cloudAngle(frame: number): number {
+  const t = Math.max(0, Math.min(1, (frame - 1) / (CLOUD_DRIFT_END_FRAME - 1)));
+  // Blender's default Bezier ease (auto-clamped, flat handles at a third of the span).
+  return CLOUD_DRIFT_RADIANS * (3 * t * t - 2 * t * t * t);
+}
+
+// Country names that swing round to face the viewer grow a little, so whichever
+// name is in front is the easiest to read while ones near the edge stay small.
+// 0 = label at the limb or beyond, 1 = dead centre; eased in between.
+const LABEL_FRONT_BOOST = 0.45; // up to 1.45x when facing the viewer squarely
+function frontEmphasis(faceDot: number): number {
+  const t = Math.max(0, Math.min(1, (faceDot - 0.55) / (0.95 - 0.55)));
+  return 1 + LABEL_FRONT_BOOST * t * t * (3 - 2 * t);
+}
 
 // Matches a menu item's origin.country ("West Africa") to its real label
 // object's name in the Blender scene (Name_westafrica) — every country name
@@ -304,6 +329,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     // Per-country group (text + its 3 shadows) pivoting around the label's own
     // center, so a hover "pop" scales it in place rather than around the globe.
     const labelPivots: Record<string, THREE.Group> = {};
+    let cloudMaterial: THREE.ShaderMaterial | null = null;
+    let life: Life | null = null;
     Promise.all([gltfLoader.loadAsync('/globe_combined.glb'), assetsPromise])
       .then(([gltf, assets]) => {
         if (disposed) return;
@@ -370,7 +397,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         gltf.scene.traverse((child) => {
           if (!(child instanceof THREE.Mesh)) return;
           if (child.name === 'Clouds') {
-            child.material = makeCloudMaterial(assets, INV_SCALE);
+            cloudMaterial = makeCloudMaterial(assets, INV_SCALE);
+            child.material = cloudMaterial;
             child.renderOrder = 1;
           } else if (child.name.startsWith('Trees')) {
             child.material = makeTreeMaterial(assets, INV_SCALE, TREE_ALBEDO[child.name] ?? [0.05, 0.25, 0.08]);
@@ -383,6 +411,20 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       // eslint-disable-next-line no-console
       .catch((err) => console.error('Globe layers failed to load', err));
 
+    // Birds, whales and the atmosphere shell (the scene's NL_* objects).
+    assetsPromise
+      .then((assets) => loadLife(gltfLoader, assets, INV_SCALE, SPHERE_RADIUS))
+      .then((loaded) => {
+        if (disposed) {
+          loaded.dispose();
+          return;
+        }
+        life = loaded;
+        globeGroup.add(loaded.group);
+      })
+      // eslint-disable-next-line no-console
+      .catch((err) => console.error('Globe wildlife failed to load', err));
+
     // The globe starts exactly as Blender's GlobeCam frames it (rotY=0,
     // rotX=0) every time the page loads, and only moves if someone drags it
     // — free on both axes, so the poles are reachable, not just a left-right
@@ -394,11 +436,22 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       lastX: number;
       lastY: number;
       override: THREE.Quaternion | null;
-    } = { rotY: 0, rotX: 0, dragging: false, lastX: 0, lastY: 0, override: null };
+      frame: number | null;
+    } = { rotY: 0, rotX: 0, dragging: false, lastX: 0, lastY: 0, override: null, frame: null };
     if (debug) {
       // Test hook (?globedebug): lets a verification script set the pose and
       // read pixels back to compare against Blender renders of the same view.
-      (window as any).__globe = { THREE, renderer, scene, camera, globeGroup, state, canvas, frame };
+      (window as any).__globe = {
+        THREE,
+        renderer,
+        scene,
+        camera,
+        globeGroup,
+        state,
+        canvas,
+        frame,
+        getLife: () => life,
+      };
     }
 
     const onPointerDown = (e: PointerEvent) => {
@@ -426,7 +479,15 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     window.addEventListener('pointerup', onPointerUp);
 
     let raf = 0;
+    const startedAt = performance.now();
     const animate = () => {
+      // The scene's timeline: frame 1 at load, advancing at the scene's fps.
+      // (?globedebug can pin it to a given frame for comparison renders.)
+      const sceneFrame = state.frame ?? 1 + ((performance.now() - startedAt) / 1000) * (life?.fps ?? 30);
+      life?.update(sceneFrame);
+      if (cloudMaterial) {
+        cloudMaterial.uniforms.uCloudRot.value = CLOUD_CAPTURE_ANGLE - cloudAngle(sceneFrame);
+      }
       if (state.override) {
         globeGroup.quaternion.copy(state.override); // ?globedebug only
       } else {
@@ -456,15 +517,17 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const currentHover = hoverScaleRef.current[item.id] ?? 1;
         const nextHover = currentHover + (hoverTarget - currentHover) * 0.25;
         hoverScaleRef.current[item.id] = nextHover;
+        // (a pinned ?globedebug pose is for like-for-like comparison with Blender renders, so no emphasis)
+        const emphasis = state.override ? 1 : frontEmphasis(faceDot);
 
         if (item.origin) {
           const pivot = labelPivots[nameKeyFor(item.origin.country)];
-          if (pivot) pivot.scale.setScalar(nextHover);
+          if (pivot) pivot.scale.setScalar(nextHover * emphasis);
         }
 
         // The visible label is the real 3D text in the scene; this DOM element
         // is only the invisible tap/hover target pinned over it.
-        const scale = (0.75 + depth * 0.35) * nextHover;
+        const scale = (0.75 + depth * 0.35) * nextHover * emphasis;
         el.style.transform = `translate(${screenX}px, ${screenY}px) translate(-50%, -50%) scale(${scale})`;
         el.style.opacity = String(opacity);
         el.style.pointerEvents = facing ? 'auto' : 'none';
@@ -481,6 +544,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      life?.dispose();
       hdrTarget?.dispose();
       postMaterial.dispose();
       renderer.dispose();
@@ -502,10 +566,6 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globeSize]);
-
-  // Black space behind the globe while browsing. When a bowl is open its card
-  // is dark-on-light content, so the original cream returns for that view.
-  const dark = !activeBowlId;
 
   return (
     <View
@@ -531,29 +591,11 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         justifyContent: activeBowlId ? 'flex-start' : 'center',
         paddingTop: activeBowlId ? spacing.xl : spacing.lg,
         paddingBottom: activeBowlId ? spacing.lg : spacing.lg,
-        backgroundColor: dark ? '#000000' : colors.cream,
+        backgroundColor: colors.cream, // black — the globe's contrast
         overflow: activeBowlId ? 'visible' : 'hidden',
         position: 'relative',
       }}
     >
-      {/* Warm, organic wash — soft sage and gold light, not a sci-fi nebula.
-          (Only meaningful on the cream background; hidden over black.) */}
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-          opacity: dark ? 0 : 1,
-          // @ts-expect-error web-only CSS background not in RN's style typings
-          background:
-            'radial-gradient(ellipse 65% 50% at 20% 10%, rgba(0,0,0,0.05), transparent 62%),' +
-            'radial-gradient(ellipse 55% 45% at 85% 80%, rgba(0,0,0,0.06), transparent 60%),' +
-            'radial-gradient(ellipse 60% 55% at 70% 20%, rgba(0,0,0,0.04), transparent 65%)',
-        }}
-      />
       {stars.map((star, i) => (
         <View
           key={i}
@@ -565,7 +607,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
             width: star.size,
             height: star.size,
             borderRadius: star.size,
-            backgroundColor: dark ? '#FFFFFF' : colors.sun,
+            backgroundColor: colors.white,
             opacity: star.opacity,
             animationName: 'planetary-eats-twinkle',
             animationDuration: `${star.duration}s`,
@@ -621,8 +663,6 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
               height: globeSize,
               borderRadius: globeSize,
               touchAction: 'none',
-              // A warm drop shadow reads on cream; on black there's nothing to shade.
-              filter: dark ? 'none' : 'drop-shadow(0 18px 40px rgba(58,46,30,0.28))',
             }}
           />
 

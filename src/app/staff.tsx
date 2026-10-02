@@ -356,7 +356,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.danger,
   },
   primaryButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },
@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.forest,
   },
   methodBadgeText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 11,
   },

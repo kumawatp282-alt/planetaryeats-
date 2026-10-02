@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   methodTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   pickupBlock: {
     marginTop: spacing.md,
@@ -199,7 +199,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
   },
   checkButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -226,7 +226,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   primaryButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 14,
   },

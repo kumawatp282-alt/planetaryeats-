@@ -18,7 +18,7 @@ interface Props {
   trackColor?: string;
 }
 
-export default function DonutChart({ segments, size = 140, strokeWidth = 22, trackColor = '#E0E0E0' }: Props) {
+export default function DonutChart({ segments, size = 140, strokeWidth = 22, trackColor = '#2B2B2B' }: Props) {
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;

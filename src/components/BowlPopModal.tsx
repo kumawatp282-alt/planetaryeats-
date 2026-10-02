@@ -544,13 +544,13 @@ const styles = StyleSheet.create({
   originCountry: {
     fontSize: 11,
     fontWeight: '700',
-    color: colors.white,
+    color: colors.onPrimary,
     marginBottom: 3,
   },
   originHistory: {
     fontSize: 8,
     lineHeight: 11,
-    color: 'rgba(255,255,255,0.85)',
+    color: colors.onPrimaryMuted,
     textAlign: 'center',
   },
   tagWrap: {
@@ -560,7 +560,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   tagPill: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.onPrimary,
     borderRadius: radii.pill,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -597,7 +597,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   chipTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   bottomBar: {
     flexDirection: 'row',
@@ -613,7 +613,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   addButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 14,
   },

@@ -329,8 +329,15 @@ const TREE_FRAG = /* glsl */ `
 const CLOUD_FRAG = /* glsl */ `
   ${COMMON_FRAG}
   uniform sampler2DArray uCloudAlpha;
+  uniform float uCloudRot;   // radians about Blender Z: (angle the pattern was captured at) - (angle now)
   void main() {
     vec3 d = normalize(vObjDirB);
+    // The scene animates the Clouds object's Z rotation, which carries its
+    // object-space noise pattern around the globe. The cube holds the pattern
+    // as captured at its final angle, so drifting it is a rotated lookup.
+    float cs = cos(uCloudRot);
+    float sn = sin(uCloudRot);
+    d = vec3(cs * d.x - sn * d.y, sn * d.x + cs * d.y, d.z);
     float layer; vec2 uv; vec2 dx; vec2 dy;
     cubeLookup(d, layer, uv, dx, dy);
     float a = 0.55 * textureGrad(uCloudAlpha, vec3(uv, layer), dx, dy).r;
@@ -395,11 +402,138 @@ export function makeCloudMaterial(assets: GlobeAssets, invScale: number): THREE.
     fragmentShader: CLOUD_FRAG,
     uniforms: {
       uCloudAlpha: { value: assets.cloudAlpha },
+      uCloudRot: { value: 0 },
       uSpecLut: { value: assets.specLut },
       uInvScale: { value: invScale },
     },
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Wildlife (birds, whales) and the atmosphere shell
+// ---------------------------------------------------------------------------
+// Every animal is a plain Principled material in the scene (base color +
+// roughness), so it is lit with the same live sun / fill / world as the Earth.
+// They are drawn as instanced meshes — see globeLife.ts.
+const LIFE_VERT = /* glsl */ `
+  varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
+  varying vec3 vObjDirB;
+  varying vec3 vMX;
+  varying vec3 vMY;
+  varying vec3 vMZ;
+  void main() {
+    mat4 m = modelMatrix;
+    #ifdef USE_INSTANCING
+      m = modelMatrix * instanceMatrix;
+    #endif
+    vec4 wp = m * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    vWorldNormal = normalize(mat3(m) * normal);
+    vObjDirB = vec3(0.0);
+    vMX = vec3(0.0);
+    vMY = vec3(0.0);
+    vMZ = vec3(0.0);
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const LIFE_FRAG = /* glsl */ `
+  ${COMMON_FRAG}
+  uniform vec3 uAlbedoLinear;
+  uniform float uRough;
+  void main() {
+    // Thin wing meshes are seen from both sides; like Blender, shade the face
+    // that is turned toward the viewer.
+    vec3 n = normalize(vWorldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+    vec3 col = shade(uAlbedoLinear, uRough, vWorldPos, n);
+    gl_FragColor = vec4(col, 1.0);
+    #include <colorspace_fragment>
+  }
+`;
+
+export function makeLifeMaterial(
+  assets: GlobeAssets,
+  invScale: number,
+  linearRGB: [number, number, number],
+  roughness: number
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: LIFE_VERT,
+    fragmentShader: LIFE_FRAG,
+    uniforms: {
+      uAlbedoLinear: { value: new THREE.Vector3(...linearRGB) },
+      uRough: { value: roughness },
+      uSpecLut: { value: assets.specLut },
+      uInvScale: { value: invScale },
+    },
+    side: THREE.DoubleSide,
+  });
+}
+
+// NL_atmosphere: a shell 6.17% larger than the globe, Emission (0.25, 0.55, 1.0)
+// x 2.5 mixed with Transparent by  clamp(Fresnel(IOR 1.9)^2.4 x 1.2)  — so it is
+// invisible face-on and a pale cyan glow toward the edge. Back faces culled.
+const ATMOSPHERE_VERT = /* glsl */ `
+  varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
+  void main() {
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const ATMOSPHERE_FRAG = /* glsl */ `
+  precision highp float;
+  varying vec3 vWorldPos;
+  varying vec3 vWorldNormal;
+  uniform vec3 uEmission;   // color x strength, linear
+  uniform float uIor;
+  uniform float uPower;
+  uniform float uMult;
+
+  // Blender's dielectric Fresnel (unpolarised), as used by the Fresnel node.
+  float fresnelDielectric(float cosi, float eta) {
+    float c = abs(cosi);
+    float g = eta * eta - 1.0 + c * c;
+    if (g <= 0.0) return 1.0;
+    g = sqrt(g);
+    float A = (g - c) / (g + c);
+    float B = (c * (g + c) - 1.0) / (c * (g - c) + 1.0);
+    return 0.5 * A * A * (1.0 + B * B);
+  }
+
+  void main() {
+    vec3 n = normalize(vWorldNormal);
+    vec3 v = normalize(cameraPosition - vWorldPos);
+    float f = clamp(pow(fresnelDielectric(dot(n, v), uIor), uPower) * uMult, 0.0, 1.0);
+    gl_FragColor = vec4(uEmission, f);
+    #include <colorspace_fragment>
+  }
+`;
+
+export function makeAtmosphereMaterial(a: {
+  color: number[];
+  strength: number;
+  ior: number;
+  power: number;
+  mult: number;
+}): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: ATMOSPHERE_VERT,
+    fragmentShader: ATMOSPHERE_FRAG,
+    uniforms: {
+      uEmission: { value: new THREE.Vector3(a.color[0] * a.strength, a.color[1] * a.strength, a.color[2] * a.strength) },
+      uIor: { value: a.ior },
+      uPower: { value: a.power },
+      uMult: { value: a.mult },
+    },
+    transparent: true,
+    depthWrite: false,
   });
 }

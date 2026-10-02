@@ -163,7 +163,7 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
   },
   categoryTextActive: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   reel: {
     width: '100%',
@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryButtonText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },

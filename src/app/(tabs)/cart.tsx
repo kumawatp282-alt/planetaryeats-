@@ -145,7 +145,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   checkoutText: {
-    color: colors.white,
+    color: colors.onPrimary,
     fontWeight: '700',
     fontSize: 15,
   },

@@ -33,7 +33,7 @@ export default function RootLayout() {
     <EmployeeAuthProvider>
       <AuthProvider>
         <StoreProvider>
-          <StatusBar style="dark" />
+          <StatusBar style="light" />
           <SplashOverlay />
           <View style={{ flex: 1, backgroundColor: colors.cream }}>
             <AppHeader />

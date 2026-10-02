@@ -1,29 +1,32 @@
 // Planetary Eats — shared design tokens.
-// Monochrome palette: black, white and gray everywhere in the app UI. The
-// only place color survives is the 3D globe itself (real photo textures,
-// atmosphere glow) — that's a deliberate exception, not an oversight. Every
-// screen pulls from here so a rebrand only touches this one file.
+// Black, white and gray everywhere in the app UI: a black stage that the 3D
+// globe (the one place color lives — real textures, atmosphere glow) pops
+// against. Every screen pulls from here, so the theme is changed in this one
+// file. Names are by role, not by hue: `forest` is the primary action color
+// (white on black), `onPrimary` is what sits on top of it, `cream` is the page.
 
 export const colors = {
   // Core brand
-  forest: '#1A1A1A', // primary — near-black (CTAs, price tags, active states)
-  leaf: '#4D4D4D', // secondary, mid gray
-  sun: '#404040', // accent (badges, highlights)
-  clay: '#595959', // secondary accent
+  forest: '#FFFFFF', // primary — CTAs, price tags, active states
+  leaf: '#BDBDBD', // secondary, light gray
+  sun: '#D0D0D0', // accent (badges, highlights)
+  clay: '#A8A8A8', // secondary accent
 
   // Neutrals
-  cream: '#FFFFFF', // app background — plain white
-  card: '#F3F3F3',
-  ink: '#111111', // primary text — near-black
-  inkMuted: '#6B6B6B', // secondary text — gray
-  border: '#E0E0E0',
+  cream: '#000000', // app background — black
+  card: '#171717', // raised surfaces
+  ink: '#F5F5F5', // primary text
+  inkMuted: '#A3A3A3', // secondary text
+  border: '#2B2B2B',
 
-  // Status — distinguished by lightness only, no hue. Both are dark enough
-  // to keep white button-text and text-on-white readable at AA contrast.
-  success: '#1F1F1F',
-  danger: '#666666',
+  // Status — distinguished by lightness only, no hue.
+  success: '#E6E6E6',
+  danger: '#9A9A9A',
 
-  // Convenience
+  // Text / icons that sit on top of a `forest` (primary) surface.
+  onPrimary: '#000000',
+  onPrimaryMuted: 'rgba(0,0,0,0.7)',
+  // A true white, for the rare thing that must stay white on any theme.
   white: '#FFFFFF',
 } as const;
 
@@ -60,9 +63,9 @@ export const typography = {
 
 export const shadow = {
   card: {
-    shadowColor: '#3A2E1E',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.5,
     shadowRadius: 12,
     elevation: 2,
   },
