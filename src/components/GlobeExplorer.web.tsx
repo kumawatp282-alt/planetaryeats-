@@ -243,6 +243,10 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       textureLoader.load(url, (tex) => {
         if ('colorSpace' in tex) (tex as any).colorSpace = (THREE as any).SRGBColorSpace;
         tex.anisotropy = anisotropy;
+        // The texture wraps all the way around the globe — without this the
+        // left/right edge columns don't blend into each other, which draws a
+        // hairline along the seam meridian.
+        tex.wrapS = THREE.RepeatWrapping;
         mesh.material = new THREE.MeshBasicMaterial({
           map: tex,
           transparent,
@@ -267,6 +271,22 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     gltfLoader.load('/globe_earth.glb', (gltf) => {
       gltf.scene.traverse((child) => {
         if (child instanceof THREE.Mesh) {
+          // The bake was stored through a Reinhard curve (t = v / (1 + v)) so
+          // its HDR highlights survived the 16-bit export. Blender's own
+          // scene is set to the "Standard" view transform, which has no such
+          // curve — it just clamps at 1.0 — so undo it here (v = t / (1 - t),
+          // then clamp) to land on exactly what Blender shows. Leaving the
+          // Reinhard curve in is what turned bright deserts/ice into dull gray.
+          const src = child.geometry.attributes.color as THREE.BufferAttribute;
+          const out = new Float32Array(src.count * 3);
+          for (let i = 0; i < src.count; i++) {
+            const t3 = [src.getX(i), src.getY(i), src.getZ(i)];
+            for (let c = 0; c < 3; c++) {
+              const t = Math.min(t3[c], 0.9999);
+              out[i * 3 + c] = Math.min(t / (1 - t), 1);
+            }
+          }
+          child.geometry.setAttribute('color', new THREE.BufferAttribute(out, 3));
           child.material = new THREE.MeshBasicMaterial({ vertexColors: true });
         }
       });
@@ -291,6 +311,15 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       Tree2: 0x0d381e,
     };
     let loadedExtras: THREE.Object3D | null = null;
+    // Blender's own label materials: "NameWhite" is a plain white Emission
+    // (strength 1.4, i.e. clamped pure white), and each label has three
+    // slightly-offset soft-shadow copies ("NameShadow0/1/2") — a Transparent/
+    // Emission mix of a near-black navy (0, 0.02, 0.05) at 27.5% / 16.5% /
+    // 9.9% opacity. Reproduced exactly here rather than approximated.
+    const LABEL_SHADOW_OPACITY = [0.275, 0.165, 0.099];
+    // Per-country group (text + its 3 shadows) pivoting around the label's own
+    // center, so a hover "pop" scales it in place rather than around the globe.
+    const labelPivots: Record<string, THREE.Group> = {};
     gltfLoader.load('/globe_combined.glb', (gltf) => {
       gltf.scene.scale.setScalar(SPHERE_RADIUS);
       gltf.scene.rotation.x = MESH_AXIS_CORRECTION;
@@ -301,18 +330,56 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       // ever gets the live drag rotation applied, nothing else).
       gltf.scene.updateMatrixWorld(true);
 
+      const countryKeys = new Set<string>();
+      gltf.scene.traverse((child) => {
+        if (/^Name_[a-z]+$/.test(child.name)) countryKeys.add(child.name);
+      });
+
+      const centers: Record<string, THREE.Vector3> = {};
+      countryKeys.forEach((key) => {
+        const textNode = gltf.scene.getObjectByName(key) as THREE.Mesh;
+        const center = new THREE.Box3().setFromObject(textNode).getCenter(new THREE.Vector3());
+        centers[key] = center;
+        // Re-pivot: shift each of the 4 meshes' own vertices so (0,0,0) is the
+        // label's center, and park them under a group sitting at that center.
+        const local = center.clone().divideScalar(SPHERE_RADIUS);
+        const pivot = new THREE.Group();
+        pivot.position.copy(local);
+        const parts = [key, `${key}_shadow0`, `${key}_shadow1`, `${key}_shadow2`];
+        parts.forEach((partName, idx) => {
+          const mesh = gltf.scene.getObjectByName(partName) as THREE.Mesh | undefined;
+          if (!mesh) return;
+          mesh.geometry.translate(-local.x, -local.y, -local.z);
+          if (idx === 0) {
+            mesh.material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+            mesh.renderOrder = 3;
+          } else {
+            mesh.material = new THREE.MeshBasicMaterial({
+              color: new THREE.Color(0, 0.02, 0.05),
+              transparent: true,
+              opacity: LABEL_SHADOW_OPACITY[idx - 1],
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            });
+            mesh.renderOrder = 2;
+          }
+          gltf.scene.remove(mesh);
+          pivot.add(mesh);
+        });
+        gltf.scene.add(pivot);
+        labelPivots[key] = pivot;
+      });
+
       bowlItems.forEach((item) => {
         if (!item.origin) return;
-        const nameNode = gltf.scene.getObjectByName(nameKeyFor(item.origin.country));
-        if (!nameNode) {
+        const key = nameKeyFor(item.origin.country);
+        if (centers[key]) {
+          markerBase[item.id] = centers[key];
+        } else {
           // eslint-disable-next-line no-console
           console.warn(`No Name_<country> label found in globe_combined.glb for "${item.origin.country}" — falling back to computed lat/long, which has a history of being subtly wrong.`);
           markerBase[item.id] = latLongToVector3(item.origin.lat, item.origin.long, SPHERE_RADIUS + 0.015);
-          return;
         }
-        nameNode.visible = false; // position only — our own HTML label renders the text
-        const center = new THREE.Box3().setFromObject(nameNode).getCenter(new THREE.Vector3());
-        markerBase[item.id] = center;
       });
 
       gltf.scene.traverse((child) => {
@@ -324,7 +391,6 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           const color = TREE_COLORS[prevName] ?? TREE_COLORS[child.name] ?? 0x1e5c22;
           child.material = new THREE.MeshBasicMaterial({ color });
         }
-        // Name_<country> meshes: no material change needed, they're hidden above.
       });
 
       globeGroup.add(gltf.scene);
@@ -420,6 +486,13 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const nextHover = currentHover + (hoverTarget - currentHover) * 0.25;
         hoverScaleRef.current[item.id] = nextHover;
 
+        if (item.origin) {
+          const pivot = labelPivots[nameKeyFor(item.origin.country)];
+          if (pivot) pivot.scale.setScalar(nextHover);
+        }
+
+        // The visible label is the real 3D text in the scene; this DOM element
+        // is only the invisible tap/hover target pinned over it.
         const scale = (0.75 + depth * 0.35) * nextHover;
         el.style.transform = `translate(${screenX}px, ${screenY}px) translate(-50%, -50%) scale(${scale})`;
         el.style.opacity = String(opacity);
@@ -651,14 +724,14 @@ const styles = {
     paddingHorizontal: 4,
     cursor: 'pointer' as const,
   },
+  // Invisible on purpose: the real label (Blender's own text geometry, font
+  // and soft shadow) is drawn inside the 3D scene. This text only exists to
+  // give the tap/hover target a sensible footprint and an accessible name.
   countryLabel: {
     fontSize: 15,
     fontWeight: '800' as const,
-    color: '#FFFFFF',
+    color: 'transparent',
     fontFamily: fonts.body,
     letterSpacing: 0.3,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
   },
 };
