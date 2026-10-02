@@ -38,6 +38,9 @@ const logoImage = require('../assets/logo-stacked.png');
 interface Props {
   items: MenuItem[]; // must have `origin` set
   onSelect: (item: MenuItem) => void;
+  // Called whenever a bowl card opens or closes, so the screen around the globe can
+  // get its own floating buttons out of the way of the card.
+  onBowlOpenChange?: (open: boolean) => void;
 }
 
 // Scene scale: Blender units -> three units. Everything (meshes, camera) is
@@ -169,7 +172,7 @@ function useTwinkleKeyframes() {
   }, []);
 }
 
-export default function GlobeExplorer({ items, onSelect }: Props) {
+export default function GlobeExplorer({ items, onSelect, onBowlOpenChange }: Props) {
   const [globeSize, setGlobeSize] = useState(320);
   const [logoHeight, setLogoHeight] = useState(84);
   const [activeBowlId, setActiveBowlId] = useState<string | null>(null);
@@ -198,6 +201,27 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
   }, []);
 
   const bowlItems = items.filter((item) => item.origin);
+
+  useEffect(() => {
+    onBowlOpenChange?.(activeBowlId !== null);
+  }, [activeBowlId, onBowlOpenChange]);
+  useEffect(() => () => onBowlOpenChange?.(false), [onBowlOpenChange]);
+
+  // Ways back to the globe from an open bowl card besides its X: the header logo
+  // ("home"), the Escape key, and (below) a tap on any empty space.
+  useEffect(() => {
+    if (activeBowlId === null) return;
+    const close = () => setActiveBowlId(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('planetary-eats:home', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('planetary-eats:home', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [activeBowlId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -740,6 +764,14 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         position: 'relative',
       }}
     >
+      {/* Open bowl card: a tap on any empty space (this backdrop) closes it. */}
+      {activeBowlId !== null && (
+        <Pressable
+          accessibilityLabel="Close"
+          onPress={() => setActiveBowlId(null)}
+          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, cursor: 'default' } as any}
+        />
+      )}
       {stars.map((star, i) => (
         <View
           key={i}
@@ -781,8 +813,11 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
 
       {/* Everything below is confined to the globe's own footprint — the
           bowl pop-out replaces just this area, not the whole screen. */}
-      <View style={{ alignItems: 'center', position: 'relative' }}>
+      <View pointerEvents="box-none" style={{ alignItems: 'center', position: 'relative' }}>
         <View
+          // The (invisible) globe and its name targets must not catch taps or drags
+          // while a bowl card is open.
+          pointerEvents={activeBowlId ? 'none' : 'auto'}
           style={{
             width: globeSize,
             height: globeSize,

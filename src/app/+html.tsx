@@ -12,7 +12,8 @@ export default function Root({ children }: PropsWithChildren) {
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
         <meta name="theme-color" content="#000000" />
-        <style>{`html, body, #root { background: #000000; color-scheme: dark; }`}</style>
+        <style>{`html, body, #root { background: #000000; color-scheme: dark; }
+          html, body { overscroll-behavior-x: none; }`}</style>
         <ScrollViewStyleReset />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />

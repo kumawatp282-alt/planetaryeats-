@@ -17,6 +17,9 @@ export default function MenuScreen() {
   const { cartCount } = useStore();
   const [items, setItems] = useState<MenuItem[] | null>(null);
   const [spinVisible, setSpinVisible] = useState(false);
+  // While a bowl card is open the three round buttons would sit on top of its close button
+  // (and its swipe area), so they step aside until it is closed.
+  const [bowlOpen, setBowlOpen] = useState(false);
 
   useEffect(() => {
     fetchMenu().then(setItems);
@@ -39,25 +42,34 @@ export default function MenuScreen() {
           rather than being clipped, while the header icons below stay
           fixed on top of it (outside the ScrollView) exactly as before. */}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
-        <Explorer items={bowls} onSelect={(item) => router.push(`/item/${item.id}`)} />
+        <Explorer
+          items={bowls}
+          onSelect={(item) => router.push(`/item/${item.id}`)}
+          onBowlOpenChange={setBowlOpen}
+        />
       </ScrollView>
 
-      <Pressable style={styles.spinButton} onPress={() => setSpinVisible(true)}>
-        <Ionicons name="shuffle-outline" size={20} color={colors.forest} />
-      </Pressable>
+      {!bowlOpen && (
+        <>
+        <Pressable style={styles.spinButton} onPress={() => setSpinVisible(true)}>
+          <Ionicons name="shuffle-outline" size={20} color={colors.forest} />
+        </Pressable>
 
-      <Pressable style={styles.shopButton} onPress={() => router.push('/shop')}>
-        <Ionicons name="leaf-outline" size={20} color={colors.forest} />
-      </Pressable>
+        <Pressable style={styles.shopButton} onPress={() => router.push('/shop')}>
+          <Ionicons name="leaf-outline" size={20} color={colors.forest} />
+        </Pressable>
 
-      <Pressable style={styles.cartButton} onPress={() => router.push('/(tabs)/cart')}>
-        <Ionicons name="cart-outline" size={22} color={colors.forest} />
-        {cartCount > 0 && (
-          <View style={styles.cartBadge}>
-            <Text style={styles.cartBadgeText}>{cartCount}</Text>
-          </View>
-        )}
-      </Pressable>
+        <Pressable style={styles.cartButton} onPress={() => router.push('/(tabs)/cart')}>
+          <Ionicons name="cart-outline" size={22} color={colors.forest} />
+          {cartCount > 0 && (
+            <View style={styles.cartBadge}>
+              <Text style={styles.cartBadgeText}>{cartCount}</Text>
+            </View>
+          )}
+        </Pressable>
+
+        </>
+      )}
 
       <SpinWheelModal
         visible={spinVisible}

@@ -64,7 +64,18 @@ export default function AppHeader() {
             <Ionicons name="chevron-back" size={20} color={colors.ink} />
           </Pressable>
         )}
-        <Pressable onPress={() => router.push('/')} style={styles.brandWrap}>
+        <Pressable
+          onPress={() => {
+            // Already on the home screen: the globe's open bowl card isn't a route, so
+            // tell the globe to close it (router.push('/') would do nothing here).
+            if (pathname === '/' && typeof window !== 'undefined') {
+              window.dispatchEvent(new Event('planetary-eats:home'));
+            } else {
+              router.push('/');
+            }
+          }}
+          style={styles.brandWrap}
+        >
           <Image
             source={wide ? logoWide : logoMark}
             style={wide ? styles.brandLogoWide : styles.brandLogoMark}

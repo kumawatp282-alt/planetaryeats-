@@ -104,12 +104,14 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
   const wheelAccum = useRef(0);
   const itemsRef = useRef(items);
   const onViewBowlRef = useRef(onViewBowl);
+  const onCloseRef = useRef(onClose);
   const sizeRef = useRef(size);
   const displayedItemRef = useRef<MenuItem | null>(null);
 
   useEffect(() => {
     itemsRef.current = items;
     onViewBowlRef.current = onViewBowl;
+    onCloseRef.current = onClose;
     sizeRef.current = size;
   });
 
@@ -157,8 +159,12 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 4,
+      onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_, gesture) => {
         translateX.setValue(gesture.dx);
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
       },
       onPanResponderRelease: (_, gesture) => {
         const size = sizeRef.current;
@@ -177,6 +183,42 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
         } else {
           Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
         }
+      },
+    })
+  ).current;
+
+  // Swiping (or tapping) anywhere on the orbit area — not just on the photo — works too:
+  // swipe either way to change bowl, tap empty space or a tile to close the card. (The
+  // photo has its own responder above: tap = open the full page.) `touch-action` on
+  // these views keeps the phone's own gestures — notably the browser's "swipe right =
+  // go back", which was swallowing right swipes — from taking the touch.
+  const stagePanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_, gesture) => {
+        translateX.setValue(gesture.dx);
+      },
+      onPanResponderRelease: (_, gesture) => {
+        const size = sizeRef.current;
+        if (Math.abs(gesture.dx) < TAP_THRESHOLD && Math.abs(gesture.dy) < TAP_THRESHOLD) {
+          translateX.setValue(0);
+          onCloseRef.current();
+        } else if (gesture.dx > SWIPE_THRESHOLD) {
+          Animated.timing(translateX, { toValue: size, duration: 160, useNativeDriver: false }).start(() =>
+            goTo(indexRef.current - 1)
+          );
+        } else if (gesture.dx < -SWIPE_THRESHOLD) {
+          Animated.timing(translateX, { toValue: -size, duration: 160, useNativeDriver: false }).start(() =>
+            goTo(indexRef.current + 1)
+          );
+        } else {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
       },
     })
   ).current;
@@ -340,15 +382,22 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
       pointerEvents="box-none"
       style={{ position: 'absolute', top: 0, left: 0, right: 0, alignItems: 'center' }}
     >
-      <View style={[styles.block, { width: blockWidth }]}>
+      <View pointerEvents="box-none" style={[styles.block, { width: blockWidth }]}>
         <Pressable style={styles.closeButton} onPress={onClose} hitSlop={12}>
           <Text style={styles.closeText}>✕</Text>
         </Pressable>
 
-        <Text style={styles.name}>{item.name}</Text>
-        <Text style={styles.price}>{formatPrice(unitPrice)}</Text>
+        <Text pointerEvents="none" style={styles.name}>
+          {item.name}
+        </Text>
+        <Text pointerEvents="none" style={styles.price}>
+          {formatPrice(unitPrice)}
+        </Text>
 
-        <View style={[styles.stage, { width: stage, height: stage, marginTop: spacing.md }]}>
+        <View
+          {...stagePanResponder.panHandlers}
+          style={[styles.stage, { width: stage, height: stage, marginTop: spacing.md, touchAction: 'pan-y', userSelect: 'none' } as any]}
+        >
           {/* the orbit's faint track */}
           <View
             pointerEvents="none"
@@ -449,6 +498,7 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
                 opacity: photoOpacity,
                 transform: [{ translateX }, { scale: photoScale }],
                 cursor: 'pointer',
+                touchAction: 'none',
               } as any,
             ]}
           >
@@ -552,17 +602,19 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     right: spacing.md,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 5,
   },
   closeText: {
-    color: '#ffffff',
-    fontSize: 14,
+    color: colors.ink,
+    fontSize: 18,
     fontWeight: '700',
   },
   name: {
