@@ -458,7 +458,7 @@ export function makeCloudMaterial(assets: GlobeAssets, invScale: number): THREE.
 }
 
 // ---------------------------------------------------------------------------
-// Wildlife (birds, whales) and the atmosphere shell
+// Wildlife (birds, whales)
 // ---------------------------------------------------------------------------
 // Every animal is a plain Principled material in the scene (base color +
 // roughness), so it is lit with the same live sun / fill / world as the Earth.
@@ -518,69 +518,5 @@ export function makeLifeMaterial(
       uShadowOn: { value: 0 },
     },
     side: THREE.DoubleSide,
-  });
-}
-
-// NL_atmosphere: a shell 6.17% larger than the globe, Emission (0.25, 0.55, 1.0)
-// x 2.5 mixed with Transparent by  clamp(Fresnel(IOR 1.9)^2.4 x 1.2)  — so it is
-// invisible face-on and a pale cyan glow toward the edge. Back faces culled.
-const ATMOSPHERE_VERT = /* glsl */ `
-  varying vec3 vWorldPos;
-  varying vec3 vWorldNormal;
-  void main() {
-    vec4 wp = modelMatrix * vec4(position, 1.0);
-    vWorldPos = wp.xyz;
-    vWorldNormal = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
-`;
-
-const ATMOSPHERE_FRAG = /* glsl */ `
-  precision highp float;
-  varying vec3 vWorldPos;
-  varying vec3 vWorldNormal;
-  uniform vec3 uEmission;   // color x strength, linear
-  uniform float uIor;
-  uniform float uPower;
-  uniform float uMult;
-
-  // Blender's dielectric Fresnel (unpolarised), as used by the Fresnel node.
-  float fresnelDielectric(float cosi, float eta) {
-    float c = abs(cosi);
-    float g = eta * eta - 1.0 + c * c;
-    if (g <= 0.0) return 1.0;
-    g = sqrt(g);
-    float A = (g - c) / (g + c);
-    float B = (c * (g + c) - 1.0) / (c * (g - c) + 1.0);
-    return 0.5 * A * A * (1.0 + B * B);
-  }
-
-  void main() {
-    vec3 n = normalize(vWorldNormal);
-    vec3 v = normalize(cameraPosition - vWorldPos);
-    float f = clamp(pow(fresnelDielectric(dot(n, v), uIor), uPower) * uMult, 0.0, 1.0);
-    gl_FragColor = vec4(uEmission, f);
-    #include <colorspace_fragment>
-  }
-`;
-
-export function makeAtmosphereMaterial(a: {
-  color: number[];
-  strength: number;
-  ior: number;
-  power: number;
-  mult: number;
-}): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    vertexShader: ATMOSPHERE_VERT,
-    fragmentShader: ATMOSPHERE_FRAG,
-    uniforms: {
-      uEmission: { value: new THREE.Vector3(a.color[0] * a.strength, a.color[1] * a.strength, a.color[2] * a.strength) },
-      uIor: { value: a.ior },
-      uPower: { value: a.power },
-      uMult: { value: a.mult },
-    },
-    transparent: true,
-    depthWrite: false,
   });
 }

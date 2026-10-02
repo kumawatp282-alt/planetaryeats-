@@ -67,16 +67,27 @@ const MESH_AXIS_CORRECTION = 0;
 // The scene's timeline. Everything that moves (the flocks, wing beats, whale
 // tails, the cloud drift) is a function of the frame number, exactly as in the
 // .blend; the page just plays it in real time at the scene's frame rate,
-// starting from frame 1.
+// starting from frame 1. (The one exception is the clouds, which keep drifting.)
 const CLOUD_DRIFT_END_FRAME = 240; // CloudsAction: keyed on frames 1 and 240
 const CLOUD_DRIFT_RADIANS = 0.5235987901687622; // 30 degrees about the polar axis
 // The cloud-alpha cube was captured with the clouds at the start of that drift
 // (rotation 0), so the drifted pattern is a lookup rotated by the angle so far.
 const CLOUD_CAPTURE_ANGLE = 0;
+// After the keyed 30 degrees the clouds in Blender simply stop; on the page they keep
+// drifting at a calm, steady pace, eased in from where the keyed motion ends so
+// there is no jolt.
+const CLOUD_CRUISE_RAD_PER_FRAME = 0.00145; // ~2.5 degrees a second at 30 fps
+const CLOUD_EASE_FRAMES = 180;
 function cloudAngle(frame: number): number {
   const t = Math.max(0, Math.min(1, (frame - 1) / (CLOUD_DRIFT_END_FRAME - 1)));
   // Blender's default Bezier ease (auto-clamped, flat handles at a third of the span).
-  return CLOUD_DRIFT_RADIANS * (3 * t * t - 2 * t * t * t);
+  const keyed = CLOUD_DRIFT_RADIANS * (3 * t * t - 2 * t * t * t);
+  const f = Math.max(0, frame - CLOUD_DRIFT_END_FRAME);
+  const u = Math.min(1, f / CLOUD_EASE_FRAMES);
+  // integral of a smoothstep speed ramp: speed 0 -> cruise over CLOUD_EASE_FRAMES
+  const eased = CLOUD_EASE_FRAMES * (u * u * u - (u * u * u * u) / 2);
+  const cruise = CLOUD_CRUISE_RAD_PER_FRAME * (f <= CLOUD_EASE_FRAMES ? eased : CLOUD_EASE_FRAMES * 0.5 + (f - CLOUD_EASE_FRAMES));
+  return keyed + cruise;
 }
 
 // Country names that swing round to face the viewer pop out, so whichever name is
@@ -87,9 +98,14 @@ function cloudAngle(frame: number): number {
 //  - the size is a spring, so a name that arrives at the front overshoots slightly
 //    and settles — a "pop" — rather than just sliding up.
 const LABEL_FACING_BOOST = 0.3; // up to 1.3x for any name facing the viewer
-const LABEL_LEADER_BOOST = 0.6; // up to 1.9x for the one at the front
+const LABEL_LEADER_BOOST = 0.55; // up to ~1.85x for the one at the front
 const LABEL_SPRING_STIFFNESS = 170;
 const LABEL_SPRING_DAMPING = 14;
+// Names are sized to fit their country in Blender, so the short ones (Italy, USA, Japan)
+// are tiny. Every name is lifted to at least this width (Blender units) so each one is
+// readable — the same lift applies when it pops.
+const LABEL_MIN_WIDTH = 0.13;
+const LABEL_MAX_LIFT = 1.9;
 function smoothstep(lo: number, hi: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
   return t * t * (3 - 2 * t);
@@ -165,7 +181,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
   const hoveredIdRef = useRef<string | null>(null);
   const hoverScaleRef = useRef<Record<string, number>>({});
   // Per-label spring (size, velocity) for the pop when a name reaches the front.
-  const popRef = useRef<Record<string, { x: number; v: number }>>({});
+  const popRef = useRef<Record<string, { x: number; v: number }>>({}); // keyed by label (Name_italy…)
   const stars = useStarfield(50);
   useTwinkleKeyframes();
 
@@ -391,6 +407,13 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     // Per-country group (text + its 3 shadows) pivoting around the label's own
     // center, so a hover "pop" scales it in place rather than around the globe.
     const labelPivots: Record<string, THREE.Group> = {};
+    const labelCenters: Record<string, THREE.Vector3> = {};
+    const labelLift: Record<string, number> = {};
+    // Where each country name sits on the globe, so the wildlife can steer clear of them.
+    let resolveNameDirections: (dirs: THREE.Vector3[]) => void = () => undefined;
+    const nameDirections = new Promise<THREE.Vector3[]>((resolve) => {
+      resolveNameDirections = resolve;
+    });
     let cloudMaterial: THREE.ShaderMaterial | null = null;
     let life: Life | null = null;
     Promise.all([gltfLoader.loadAsync('/globe_combined.glb'), assetsPromise])
@@ -413,8 +436,12 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const centers: Record<string, THREE.Vector3> = {};
         countryKeys.forEach((key) => {
           const textNode = gltf.scene.getObjectByName(key) as THREE.Mesh;
-          const center = new THREE.Box3().setFromObject(textNode).getCenter(new THREE.Vector3());
+          const box = new THREE.Box3().setFromObject(textNode);
+          const center = box.getCenter(new THREE.Vector3());
           centers[key] = center;
+          labelCenters[key] = center;
+          const width = Math.max(...box.getSize(new THREE.Vector3()).toArray()) / SPHERE_RADIUS;
+          labelLift[key] = Math.max(1, Math.min(LABEL_MAX_LIFT, LABEL_MIN_WIDTH / Math.max(width, 1e-3)));
           // Re-pivot: shift each of the 4 meshes' own vertices so (0,0,0) is the
           // label's center, and park them under a group sitting at that center.
           const local = center.clone().divideScalar(SPHERE_RADIUS);
@@ -445,6 +472,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           labelPivots[key] = pivot;
         });
 
+        resolveNameDirections(Object.values(centers).map((c) => c.clone().normalize()));
+
         bowlItems.forEach((item) => {
           if (!item.origin) return;
           const key = nameKeyFor(item.origin.country);
@@ -472,11 +501,14 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         loadedExtras = gltf.scene;
       })
       // eslint-disable-next-line no-console
-      .catch((err) => console.error('Globe layers failed to load', err));
+      .catch((err) => {
+        resolveNameDirections([]);
+        console.error('Globe layers failed to load', err);
+      });
 
     // Birds, whales and the atmosphere shell (the scene's NL_* objects).
-    assetsPromise
-      .then((assets) => loadLife(gltfLoader, assets, INV_SCALE, SPHERE_RADIUS))
+    Promise.all([assetsPromise, nameDirections])
+      .then(([assets, names]) => loadLife(gltfLoader, assets, INV_SCALE, SPHERE_RADIUS, names))
       .then((loaded) => {
         if (disposed) {
           loaded.dispose();
@@ -563,17 +595,47 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       const nowMs = performance.now();
       const dt = Math.min(0.05, Math.max(0.001, (nowMs - lastLabelTick) / 1000));
       lastLabelTick = nowMs;
-      // How squarely each label faces the camera (1 = dead-on, 0 = on the limb),
-      // and which one is furthest to the front.
-      const faceDots: Record<string, number> = {};
+      // Every name, whether or not it has a bowl: how squarely it faces the camera
+      // (1 = dead-on, 0 = on the limb), which one is at the front, and its size.
+      const labelDir: Record<string, THREE.Vector3> = {};
+      const labelDot: Record<string, number> = {};
+      let leaderKey = '';
       let leaderDot = -1;
-      bowlItems.forEach((item) => {
-        const base = markerBase[item.id];
-        if (!base) return;
-        const w = base.clone().applyMatrix4(globeGroup.matrixWorld);
-        const d = w.clone().normalize().dot(camera.position.clone().sub(w).normalize());
-        faceDots[item.id] = d;
-        if (d > leaderDot) leaderDot = d;
+      Object.keys(labelPivots).forEach((key) => {
+        const c = labelCenters[key];
+        if (!c) return;
+        const w = c.clone().applyMatrix4(globeGroup.matrixWorld);
+        const dir = w.clone().normalize();
+        const d = dir.dot(camera.position.clone().sub(w).normalize());
+        labelDir[key] = dir;
+        labelDot[key] = d;
+        if (d > leaderDot) {
+          leaderDot = d;
+          leaderKey = key;
+        }
+      });
+      const labelSize: Record<string, number> = {};
+      Object.keys(labelPivots).forEach((key) => {
+        const lift = labelLift[key] ?? 1;
+        let emphasis = 1;
+        // (a pinned ?globedebug pose is for like-for-like comparison with Blender renders, so no emphasis)
+        if (!state.override && labelDir[key]) {
+          const facingAmt = smoothstep(0.5, 0.9, labelDot[key]);
+          // only the name at the front pops fully; its close neighbours (Germany / Italy /
+          // Greece sit within ~10 degrees of each other) share a smaller swell
+          const apart = Math.acos(Math.max(-1, Math.min(1, labelDir[key].dot(labelDir[leaderKey]))));
+          const leads = 1 - smoothstep(0.07, 0.25, apart);
+          // ...and names right beside the front one give way a little so they don't overlap it
+          const yields = (1 - leads) * (1 - smoothstep(0.1, 0.3, apart));
+          const target = (1 + LABEL_FACING_BOOST * facingAmt + LABEL_LEADER_BOOST * facingAmt * leads) * (1 - 0.25 * yields);
+          const spring = popRef.current[key] ?? { x: 1, v: 0 };
+          spring.v += (LABEL_SPRING_STIFFNESS * (target - spring.x) - LABEL_SPRING_DAMPING * spring.v) * dt;
+          spring.x += spring.v * dt;
+          popRef.current[key] = spring;
+          emphasis = Math.max(0.9, spring.x);
+        }
+        labelSize[key] = emphasis * (state.override ? 1 : lift);
+        labelPivots[key].scale.setScalar(labelSize[key]);
       });
 
       bowlItems.forEach((item) => {
@@ -597,27 +659,15 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         const currentHover = hoverScaleRef.current[item.id] ?? 1;
         const nextHover = currentHover + (hoverTarget - currentHover) * 0.25;
         hoverScaleRef.current[item.id] = nextHover;
-        // (a pinned ?globedebug pose is for like-for-like comparison with Blender renders, so no emphasis)
-        let emphasis = 1;
-        if (!state.override) {
-          const facingAmt = smoothstep(0.5, 0.9, faceDot);
-          const leads = smoothstep(leaderDot - 0.07, leaderDot, faceDot);
-          const target = 1 + LABEL_FACING_BOOST * facingAmt + LABEL_LEADER_BOOST * facingAmt * leads;
-          const spring = popRef.current[item.id] ?? { x: 1, v: 0 };
-          spring.v += (LABEL_SPRING_STIFFNESS * (target - spring.x) - LABEL_SPRING_DAMPING * spring.v) * dt;
-          spring.x += spring.v * dt;
-          popRef.current[item.id] = spring;
-          emphasis = Math.max(0.9, spring.x);
-        }
+        const key = item.origin ? nameKeyFor(item.origin.country) : '';
+        const size = labelSize[key] ?? 1;
 
-        if (item.origin) {
-          const pivot = labelPivots[nameKeyFor(item.origin.country)];
-          if (pivot) pivot.scale.setScalar(nextHover * emphasis);
-        }
+        const pivot = labelPivots[key];
+        if (pivot) pivot.scale.setScalar(nextHover * size);
 
         // The visible label is the real 3D text in the scene; this DOM element
         // is only the invisible tap/hover target pinned over it.
-        const scale = (0.75 + depth * 0.35) * nextHover * emphasis;
+        const scale = (0.75 + depth * 0.35) * nextHover * size;
         el.style.transform = `translate(${screenX}px, ${screenY}px) translate(-50%, -50%) scale(${scale})`;
         el.style.opacity = String(opacity);
         el.style.pointerEvents = facing ? 'auto' : 'none';

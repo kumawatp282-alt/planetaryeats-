@@ -1,8 +1,8 @@
-// Tapping a bowl's photo pin on the globe pops this up: a cluster of
-// circular tiles — a big photo circle plus real facts (calories, protein,
-// origin story, tags/allergens, and any admin-added extra tiles), a quick
-// protein choice, and Add to cart — all in place of the globe itself (not
-// a full-screen takeover). Swipe left/right — by drag or trackpad — on the
+// Tapping a bowl's photo pin on the globe pops this up: the bowl's photo in the
+// middle, with real facts (calories, protein, origin story, tags/allergens, and
+// any admin-added extra tiles) in circular tiles that slowly orbit around it like
+// moons, a quick protein choice, and Add to cart — all in place of the globe
+// itself (not a full-screen takeover). Swipe left/right — by drag or trackpad — on the
 // photo to browse other bowls; tap it (or "View full page") to open the
 // full item page; tap the X to dismiss back to the globe.
 //
@@ -41,6 +41,27 @@ const TAP_THRESHOLD = 8;
 const WHEEL_SWIPE_THRESHOLD = 40;
 const WHEEL_LOCK_MS = 450;
 
+// The orbit: the ring of tiles turns slowly about the photo, and each tile turns the
+// opposite way at the same rate so its text always stays upright. Respects
+// "reduce motion".
+let orbitStyleInjected = false;
+function useOrbitKeyframes() {
+  useEffect(() => {
+    if (orbitStyleInjected || typeof document === 'undefined') return;
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes pe-orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      @keyframes pe-orbit-back { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        [data-pe-orbit] { animation: none !important; }
+      }
+    `;
+    document.head.appendChild(style);
+    orbitStyleInjected = true;
+  }, []);
+}
+const ORBIT_SECONDS = 110;
+
 function TileFade({
   index,
   total,
@@ -68,7 +89,8 @@ function TileFade({
 export default function BowlPopModal({ items, allItems, activeId, size, onClose, onViewBowl }: Props) {
   const { remainingCalories } = useTodayNutrition();
   const { addToCart } = useStore();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  useOrbitKeyframes();
   const [index, setIndex] = useState(0);
   const [siblingId, setSiblingId] = useState<string | null>(null);
   const [selectedProtein, setSelectedProtein] = useState<string | undefined>(undefined);
@@ -197,17 +219,23 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
     setJustAdded(true);
   };
 
-  // A cluster of same-shape circles, wrapping to fit whatever width is
-  // available — no fixed grid to overflow or leave gaps in. Sized down a
-  // notch on narrow windows so the cluster still wraps into a tidy shape
-  // rather than one long column.
-  const isNarrow = windowWidth < 560;
+  // The orbit stage: a square, as big as the window allows (leaving room above for
+  // the name and price and below for the protein choice and Add button), with the
+  // photo in the middle and the tiles spaced evenly round a ring. Tile size is the
+  // largest that keeps neighbours from touching; the photo is the largest that
+  // fits inside the ring.
   const blockWidth = Math.min(windowWidth * 0.94, 760);
-  const photoSize = isNarrow ? 168 : 210;
-  const factSize = isNarrow ? 104 : 128;
-  const clusterGap = isNarrow ? spacing.md : spacing.lg;
-
+  const stage = Math.max(260, Math.min(blockWidth, windowHeight - 300, 580));
   const goodToKnow = [...(item.tags ?? []), ...(item.allergens ?? [])];
+  const tileCount =
+    (item.origin ? 1 : 0) + 1 + (goodToKnow.length > 0 ? 1 : 0) + (item.nutrition ? 3 : 0) + (item.facts?.length ?? 0);
+  const sinStep = Math.sin(Math.PI / Math.max(tileCount, 3));
+  const tileSize = Math.min(132, stage * 0.29, (stage * sinStep) / (1.12 + sinStep));
+  const ringRadius = (stage - tileSize) / 2;
+  const photoSize = Math.max(96, Math.min(stage * 0.44, 2 * ringRadius - tileSize - 14));
+  // Small tiles can't fit as much text: show a little less of it.
+  const compact = tileSize < 112;
+
   const photoScale = cardsAnim.interpolate({ inputRange: [0, 0.3], outputRange: [0.94, 1], extrapolate: 'clamp' });
   const photoOpacity = cardsAnim.interpolate({ inputRange: [0, 0.25], outputRange: [0, 1], extrapolate: 'clamp' });
 
@@ -224,7 +252,7 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
         <>
           <Text style={styles.originFlag}>{item.origin.flag}</Text>
           <Text style={styles.originCountry}>{item.origin.country}</Text>
-          <Text style={styles.originHistory} numberOfLines={3}>
+          <Text style={styles.originHistory} numberOfLines={compact ? 2 : 3}>
             {item.origin.history}
           </Text>
         </>
@@ -236,7 +264,7 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
     content: (
       <>
         <Text style={styles.tileLabel}>ABOUT</Text>
-        <Text style={styles.tileBody} numberOfLines={4}>
+        <Text style={styles.tileBody} numberOfLines={compact ? 3 : 4}>
           {item.description}
         </Text>
       </>
@@ -320,13 +348,101 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
         <Text style={styles.name}>{item.name}</Text>
         <Text style={styles.price}>{formatPrice(unitPrice)}</Text>
 
-        <View style={[styles.cluster, { gap: clusterGap, marginTop: spacing.lg }]}>
+        <View style={[styles.stage, { width: stage, height: stage, marginTop: spacing.md }]}>
+          {/* the orbit's faint track */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: stage / 2 - ringRadius,
+              top: stage / 2 - ringRadius,
+              width: ringRadius * 2,
+              height: ringRadius * 2,
+              borderRadius: ringRadius,
+              borderWidth: 1,
+              borderColor: colors.border,
+              opacity: 0.7,
+            }}
+          />
+
+          {/* the tiles, turning slowly round the photo */}
+          <View
+            // @ts-expect-error web-only data attribute (used by the reduce-motion rule)
+            dataSet={{ peOrbit: '1' }}
+            pointerEvents="box-none"
+            style={
+              {
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: stage,
+                height: stage,
+                animationName: 'pe-orbit',
+                animationDuration: `${ORBIT_SECONDS}s`,
+                animationTimingFunction: 'linear',
+                animationIterationCount: 'infinite',
+              } as any
+            }
+          >
+            {tiles.map((tile, i) => {
+              const angle = -Math.PI / 2 + (i * 2 * Math.PI) / tiles.length;
+              return (
+                <TileFade
+                  key={tile.key}
+                  index={i}
+                  total={tiles.length}
+                  anim={cardsAnim}
+                  style={[
+                    styles.circle,
+                    styles.orbitTile,
+                    tile.dark && styles.circleDark,
+                    {
+                      left: stage / 2 + ringRadius * Math.cos(angle) - tileSize / 2,
+                      top: stage / 2 + ringRadius * Math.sin(angle) - tileSize / 2,
+                      width: tileSize,
+                      height: tileSize,
+                      borderRadius: tileSize / 2,
+                      padding: 0,
+                    },
+                  ]}
+                >
+                  <View
+                    // @ts-expect-error web-only data attribute (used by the reduce-motion rule)
+                    dataSet={{ peOrbit: '1' }}
+                    style={
+                      {
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        right: 0,
+                        bottom: 0,
+                        padding: compact ? spacing.sm : spacing.sm + 4,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        animationName: 'pe-orbit-back',
+                        animationDuration: `${ORBIT_SECONDS}s`,
+                        animationTimingFunction: 'linear',
+                        animationIterationCount: 'infinite',
+                      } as any
+                    }
+                  >
+                    {tile.content}
+                  </View>
+                </TileFade>
+              );
+            })}
+          </View>
+
+          {/* the bowl, in the middle */}
           <Animated.View
             {...panResponder.panHandlers}
             style={[
               styles.circle,
               styles.photoCircle,
               {
+                position: 'absolute',
+                left: stage / 2 - photoSize / 2,
+                top: stage / 2 - photoSize / 2,
                 width: photoSize,
                 height: photoSize,
                 borderRadius: photoSize / 2,
@@ -344,22 +460,6 @@ export default function BowlPopModal({ items, allItems, activeId, size, onClose,
               </View>
             )}
           </Animated.View>
-
-          {tiles.map((tile, i) => (
-            <TileFade
-              key={tile.key}
-              index={i}
-              total={tiles.length}
-              anim={cardsAnim}
-              style={[
-                styles.circle,
-                tile.dark && styles.circleDark,
-                { width: factSize, height: factSize, borderRadius: factSize / 2 },
-              ]}
-            >
-              {tile.content}
-            </TileFade>
-          ))}
         </View>
 
         {item.proteinOptions && item.proteinOptions.length > 0 && (
@@ -480,11 +580,11 @@ const styles = StyleSheet.create({
     color: colors.clay,
     textAlign: 'center',
   },
-  cluster: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'center',
+  stage: {
+    alignSelf: 'center',
+  },
+  orbitTile: {
+    position: 'absolute',
   },
   circle: {
     borderRadius: 999,
@@ -601,9 +701,11 @@ const styles = StyleSheet.create({
   },
   bottomBar: {
     flexDirection: 'row',
+    flexWrap: 'wrap', // on a phone "View full page" drops to its own line instead of overflowing
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.md,
+    columnGap: spacing.md,
+    rowGap: spacing.sm,
     marginTop: spacing.md,
   },
   addButton: {
