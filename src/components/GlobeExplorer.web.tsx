@@ -32,7 +32,7 @@ import { colors, fonts, spacing } from '../constants/theme';
 import BowlPopModal from './BowlPopModal';
 import { loadGlobeAssets, makeCloudMaterial, makeEarthMaterial, makeTreeMaterial } from './globeShading';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoImage = require('../assets/planetary-eats-logo.png');
+const logoWhiteImage = require('../assets/planetary-eats-logo-white.png');
 
 interface Props {
   items: MenuItem[]; // must have `origin` set
@@ -503,6 +503,10 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globeSize]);
 
+  // Black space behind the globe while browsing. When a bowl is open its card
+  // is dark-on-light content, so the original cream returns for that view.
+  const dark = !activeBowlId;
+
   return (
     <View
       style={{
@@ -527,12 +531,13 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
         justifyContent: activeBowlId ? 'flex-start' : 'center',
         paddingTop: activeBowlId ? spacing.xl : spacing.lg,
         paddingBottom: activeBowlId ? spacing.lg : spacing.lg,
-        backgroundColor: colors.cream,
+        backgroundColor: dark ? '#000000' : colors.cream,
         overflow: activeBowlId ? 'visible' : 'hidden',
         position: 'relative',
       }}
     >
-      {/* Warm, organic wash — soft sage and gold light, not a sci-fi nebula */}
+      {/* Warm, organic wash — soft sage and gold light, not a sci-fi nebula.
+          (Only meaningful on the cream background; hidden over black.) */}
       <View
         pointerEvents="none"
         style={{
@@ -541,6 +546,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           top: 0,
           right: 0,
           bottom: 0,
+          opacity: dark ? 0 : 1,
           // @ts-expect-error web-only CSS background not in RN's style typings
           background:
             'radial-gradient(ellipse 65% 50% at 20% 10%, rgba(0,0,0,0.05), transparent 62%),' +
@@ -559,7 +565,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
             width: star.size,
             height: star.size,
             borderRadius: star.size,
-            backgroundColor: colors.sun,
+            backgroundColor: dark ? '#FFFFFF' : colors.sun,
             opacity: star.opacity,
             animationName: 'planetary-eats-twinkle',
             animationDuration: `${star.duration}s`,
@@ -575,13 +581,18 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           no scrolling" actually needs. */}
       {!activeBowlId && (
         <>
+          {/* White-on-transparent artwork (derived from the original logo) for
+              the black background; the original is black on white and relied
+              on a multiply blend to melt into a light page. */}
           <Image
-            source={logoImage}
+            source={logoWhiteImage}
             style={styles.brandLogo}
             resizeMode="contain"
             accessibilityLabel="Planetary Eats"
           />
-          <Text style={styles.tagline}>Good for you. Good for the planet.</Text>
+          <Text style={[styles.tagline, { color: 'rgba(255,255,255,0.72)' }]}>
+            Good for you. Good for the planet.
+          </Text>
         </>
       )}
 
@@ -610,7 +621,8 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
               height: globeSize,
               borderRadius: globeSize,
               touchAction: 'none',
-              filter: 'drop-shadow(0 18px 40px rgba(58,46,30,0.28))',
+              // A warm drop shadow reads on cream; on black there's nothing to shade.
+              filter: dark ? 'none' : 'drop-shadow(0 18px 40px rgba(58,46,30,0.28))',
             }}
           />
 
@@ -650,7 +662,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
           ))}
         </View>
 
-        <Text style={[styles.hint, activeBowlId ? { opacity: 0 } : null]}>
+        <Text style={[styles.hint, { color: 'rgba(255,255,255,0.6)' }, activeBowlId ? { opacity: 0 } : null]}>
           Drag to spin · tap a country to explore
         </Text>
 
@@ -674,8 +686,6 @@ const styles = {
   brandLogo: {
     width: 220,
     height: 68,
-    // Same multiply trick as AppHeader — see its comment for why.
-    mixBlendMode: 'multiply' as const,
   },
   tagline: {
     fontSize: 15,

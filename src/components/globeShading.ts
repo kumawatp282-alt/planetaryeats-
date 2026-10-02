@@ -334,6 +334,15 @@ const CLOUD_FRAG = /* glsl */ `
     float layer; vec2 uv; vec2 dx; vec2 dy;
     cubeLookup(d, layer, uv, dx, dy);
     float a = 0.55 * textureGrad(uCloudAlpha, vec3(uv, layer), dx, dy).r;
+    // The cloud shell is a sphere slightly larger than the globe, so beyond the
+    // globe's edge you see it edge-on as wispy arcs floating in space. Fine on
+    // Blender's cream backdrop, but against black it reads as a fuzzy, dirty
+    // outline. Keep every cloud over the globe (including those right at its
+    // rim) and fade out only what hangs past the silhouette.
+    vec3 camB = toB(cameraPosition) * uInvScale;
+    vec3 rayB = normalize(toB(vWorldPos) * uInvScale - camB);
+    float closest = length(camB + rayB * dot(-camB, rayB));   // ray's nearest approach to the center
+    a *= 1.0 - smoothstep(1.005, 1.03, closest);
     vec3 n = normalize(vWorldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
     vec3 col = shade(vec3(1.0), 1.0, vWorldPos, n) + vec3(0.15);
     gl_FragColor = vec4(col, a);
