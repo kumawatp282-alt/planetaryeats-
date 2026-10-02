@@ -30,7 +30,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MenuItem } from '../data/menu';
 import { colors, fonts, spacing } from '../constants/theme';
 import BowlPopModal from './BowlPopModal';
-import { loadGlobeAssets, makeCloudMaterial, makeEarthMaterial, makeTreeMaterial } from './globeShading';
+import { loadGlobeAssets, makeCloudMaterial, makeEarthMaterial, makeTreeMaterial, shadowUniforms } from './globeShading';
 import { Life, loadLife } from './globeLife';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logoWhiteImage = require('../assets/planetary-eats-logo-white.png');
@@ -235,8 +235,54 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       blending: THREE.NoBlending,
     });
     postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial));
+    // Sun shadow map: the trees and the wildlife (layer 1) seen from the sun
+    // (GlobeSun's direction, fixed in the world — it is the globe that turns),
+    // as a plain depth image the Earth's shader looks up to find what is in
+    // shade. Soft-filtered there, like Blender's.
+    const SUN_WORLD = new THREE.Vector3(0.599087, 0.609219, 0.519564); // GlobeSun, in scene axes
+    const SHADOW_NEAR = 3;
+    const SHADOW_FAR = 9;
+    const SHADOW_EXTENT = SPHERE_RADIUS * 1.32; // covers the globe plus its tallest relief and the animals
+    const shadowSize = Math.min(window.screen?.width ?? 1024, window.screen?.height ?? 1024) < 700 ? 1024 : 2048;
+    const shadowDepth = new THREE.DepthTexture(shadowSize, shadowSize);
+    shadowDepth.type = THREE.UnsignedIntType;
+    shadowDepth.minFilter = THREE.NearestFilter;
+    shadowDepth.magFilter = THREE.NearestFilter;
+    const shadowTarget = new THREE.WebGLRenderTarget(shadowSize, shadowSize, {
+      depthTexture: shadowDepth,
+      depthBuffer: true,
+    });
+    const shadowCamera = new THREE.OrthographicCamera(
+      -SHADOW_EXTENT,
+      SHADOW_EXTENT,
+      SHADOW_EXTENT,
+      -SHADOW_EXTENT,
+      SHADOW_NEAR,
+      SHADOW_FAR
+    );
+    shadowCamera.position.copy(SUN_WORLD).normalize().multiplyScalar(6);
+    shadowCamera.lookAt(0, 0, 0);
+    shadowCamera.layers.set(1);
+    shadowCamera.updateMatrixWorld(true);
+    shadowCamera.updateProjectionMatrix();
+    shadowUniforms.uShadowMap.value = shadowDepth;
+    shadowUniforms.uShadowMatrix.value.multiplyMatrices(shadowCamera.projectionMatrix, shadowCamera.matrixWorldInverse);
+    shadowUniforms.uShadowTexel.value.set(1 / shadowSize, 1 / shadowSize);
+    shadowUniforms.uShadowDepthRange.value = SHADOW_FAR - SHADOW_NEAR;
+    const shadowMaterial = new THREE.MeshDepthMaterial({ side: THREE.DoubleSide });
+    camera.layers.enable(1); // casters are on layer 1 as well as the default layer
+    const renderShadows = () => {
+      scene.overrideMaterial = shadowMaterial;
+      renderer.setRenderTarget(shadowTarget);
+      renderer.clear();
+      renderer.render(scene, shadowCamera);
+      scene.overrideMaterial = null;
+      renderer.setRenderTarget(null);
+    };
+
     const drawSize = new THREE.Vector2();
     const frame = () => {
+      renderShadows();
       if (!hdrTarget) {
         renderer.render(scene, camera);
         return;
@@ -402,6 +448,7 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
             child.renderOrder = 1;
           } else if (child.name.startsWith('Trees')) {
             child.material = makeTreeMaterial(assets, INV_SCALE, TREE_ALBEDO[child.name] ?? [0.05, 0.25, 0.08]);
+            child.layers.enable(1); // casts sun shadows
           }
         });
 
@@ -545,6 +592,10 @@ export default function GlobeExplorer({ items, onSelect }: Props) {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       life?.dispose();
+      shadowTarget.dispose();
+      shadowDepth.dispose();
+      shadowMaterial.dispose();
+      shadowUniforms.uShadowMap.value = null;
       hdrTarget?.dispose();
       postMaterial.dispose();
       renderer.dispose();

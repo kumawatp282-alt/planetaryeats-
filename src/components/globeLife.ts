@@ -101,6 +101,7 @@ export async function loadLife(
     (parts[name] ?? []).map((part) => {
       const im = new THREE.InstancedMesh(part.geometry, materialFor(part.material), instancesPerMesh[mi]);
       im.frustumCulled = false;
+      im.layers.enable(1); // casts sun shadows (see GlobeExplorer)
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       group.add(im);
       return im;

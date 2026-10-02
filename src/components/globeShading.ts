@@ -108,6 +108,16 @@ async function loadSpecLut(): Promise<THREE.DataArrayTexture> {
   return tex;
 }
 
+// One sun shadow map is shared by every material. GlobeExplorer fills it in each
+// frame; with no map (unsupported device) nothing is darkened and everything
+// is just unshadowed, as before.
+export const shadowUniforms = {
+  uShadowMap: { value: null as THREE.Texture | null },
+  uShadowMatrix: { value: new THREE.Matrix4() },
+  uShadowTexel: { value: new THREE.Vector2(1 / 2048, 1 / 2048) },
+  uShadowDepthRange: { value: 6 },
+};
+
 let assetsCache: Promise<GlobeAssets> | null = null;
 
 // Decoding the six-face textures is the expensive part; do it once per page
@@ -180,6 +190,14 @@ const COMMON_FRAG = /* glsl */ `
   uniform sampler2DArray uSpecLut;
   uniform float uInvScale;     // 1 / scene scale, so distances match Blender's units
 
+  // Sun shadow map (see GlobeExplorer): depth of the trees and the wildlife as
+  // seen from the sun. Only the Earth surface receives it (uShadowOn).
+  uniform sampler2D uShadowMap;
+  uniform mat4 uShadowMatrix;       // world -> sun clip space
+  uniform vec2 uShadowTexel;        // 1 / map size
+  uniform float uShadowDepthRange;  // far - near, in world units
+  uniform float uShadowOn;
+
   const float PI = 3.14159265358979;
   const float CUBE_PAD = ${CUBE_PAD.toFixed(2)};
 
@@ -238,6 +256,26 @@ const COMMON_FRAG = /* glsl */ `
     return rr < 0.43 ? mix(a, b, t1) : mix(b, c, t2);
   }
 
+  // Fraction of the sun that reaches pW (1 = fully lit): percentage-closer
+  // filtering over a small kernel, with a bias that scales with how obliquely the
+  // sun grazes the surface.
+  float sunVisibility(vec3 pW, vec3 nW) {
+    vec3 lW = vec3(LS.x, LS.z, -LS.y);                       // sun direction in world axes
+    float nl = clamp(dot(nW, lW), 0.0, 1.0);
+    vec4 sp = uShadowMatrix * vec4(pW + nW * 0.004, 1.0);
+    vec3 sc = sp.xyz / sp.w * 0.5 + 0.5;
+    if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0) return 1.0;
+    float bias = (0.004 + 0.012 * (1.0 - nl)) / uShadowDepthRange;
+    float lit = 0.0;
+    for (int i = -2; i <= 2; i++) {
+      for (int j = -2; j <= 2; j++) {
+        float d = texture2D(uShadowMap, sc.xy + vec2(float(i), float(j)) * uShadowTexel).r;
+        lit += (sc.z - bias <= d) ? 1.0 : 0.0;
+      }
+    }
+    return lit / 25.0;
+  }
+
   // Principled BSDF as set up in the scene: diffuse lit by sun + fill + world,
   // dimmed by what the specular layer reflects, plus the specular term.
   vec3 shade(vec3 albedo, float rough, vec3 pW, vec3 nW) {
@@ -250,6 +288,7 @@ const COMMON_FRAG = /* glsl */ `
     float Fl = 0.059 + 0.058 * (1.0 - nv) * (1.0 - nv);
     float A = 1.0 - mix(Fo, Fl, t);
     float sun = SUN_K * max(dot(nB, LS), 0.0);
+    if (uShadowOn > 0.5) sun *= sunVisibility(pW, nW);
     float fill = FILL_K * fillIrradiance(pB, nB);
     float ao = mix(0.97, 0.90, t);
     vec3 diffuse = A * (vec3(sun + fill) + ao * WORLD);
@@ -369,6 +408,8 @@ export function makeEarthMaterial(assets: GlobeAssets, invScale: number): THREE.
       // Placeholder until the real faces arrive (never sampled while uBump = 0).
       uNormals: { value: assets.albedo },
       uBump: { value: 0 },
+      ...shadowUniforms,
+      uShadowOn: { value: 1 }, // the Earth surface is what trees and animals cast shadows onto
     },
   });
   assets.normals
@@ -392,6 +433,8 @@ export function makeTreeMaterial(
       uAlbedoLinear: { value: new THREE.Vector3(...linearRGB) },
       uSpecLut: { value: assets.specLut },
       uInvScale: { value: invScale },
+      ...shadowUniforms,
+      uShadowOn: { value: 1 }, // trees shade each other and themselves, as in Blender
     },
   });
 }
@@ -405,6 +448,8 @@ export function makeCloudMaterial(assets: GlobeAssets, invScale: number): THREE.
       uCloudRot: { value: 0 },
       uSpecLut: { value: assets.specLut },
       uInvScale: { value: invScale },
+      ...shadowUniforms,
+      uShadowOn: { value: 0 },
     },
     transparent: true,
     depthWrite: false,
@@ -469,6 +514,8 @@ export function makeLifeMaterial(
       uRough: { value: roughness },
       uSpecLut: { value: assets.specLut },
       uInvScale: { value: invScale },
+      ...shadowUniforms,
+      uShadowOn: { value: 0 },
     },
     side: THREE.DoubleSide,
   });
