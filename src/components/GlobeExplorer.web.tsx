@@ -108,6 +108,13 @@ const LABEL_SPRING_DAMPING = 14;
 // are tiny. Every name is lifted to at least this width (Blender units) so each one is
 // readable — the same lift applies when it pops.
 const LABEL_MIN_WIDTH = 0.13;
+// The names must stand out against every background the globe has — deep blue sea, green
+// forest, pale desert, white snow and cloud — so each is a vivid fill with a dark outline
+// (drawn as a ring of offset copies of the text), and sits above the clouds.
+const LABEL_FILL = 0xff2e93; // hot pink: the one hue the globe never has (tested against sea, forest, desert, snow, cloud)
+const LABEL_OUTLINE = 0x04121f;
+const LABEL_OUTLINE_COPIES = 14;
+const LABEL_OUTLINE_WIDTH = 0.2; // outline thickness as a fraction of the text's height
 const LABEL_MAX_LIFT = 1.9;
 function smoothstep(lo: number, hi: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
@@ -428,6 +435,18 @@ export default function GlobeExplorer({ items, onSelect, onBowlOpenChange }: Pro
     // Emission mix of a near-black navy (0, 0.02, 0.05) at 27.5% / 16.5% /
     // 9.9% opacity. Reproduced exactly here rather than approximated.
     const LABEL_SHADOW_OPACITY = [0.275, 0.165, 0.099];
+    const labelFillMaterial = new THREE.MeshBasicMaterial({
+      color: LABEL_FILL,
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthWrite: false,
+    });
+    const labelOutlineMaterial = new THREE.MeshBasicMaterial({
+      color: LABEL_OUTLINE,
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthWrite: false,
+    });
     // Per-country group (text + its 3 shadows) pivoting around the label's own
     // center, so a hover "pop" scales it in place rather than around the globe.
     const labelPivots: Record<string, THREE.Group> = {};
@@ -477,9 +496,29 @@ export default function GlobeExplorer({ items, onSelect, onBowlOpenChange }: Pro
             if (!mesh) return;
             mesh.geometry.translate(-local.x, -local.y, -local.z);
             if (idx === 0) {
-              mesh.material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
-              mesh.renderOrder = 3;
+              // Drawn after the clouds (transparent queue, higher renderOrder) so a cloud
+              // never veils a name; depth-tested against the globe so a name behind it
+              // stays hidden.
+              mesh.material = labelFillMaterial;
+              mesh.renderOrder = 6;
+              // the outline: copies of the text nudged around a ring in the surface's plane
+              mesh.geometry.computeBoundingBox();
+              const size = mesh.geometry.boundingBox!.getSize(new THREE.Vector3()).toArray().sort((a, b) => b - a);
+              const radius = LABEL_OUTLINE_WIDTH * size[1]; // [length, height, thickness]
+              const n = local.clone().normalize();
+              const t1 = new THREE.Vector3().crossVectors(n, Math.abs(n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize();
+              const t2 = new THREE.Vector3().crossVectors(n, t1).normalize();
+              for (let k = 0; k < LABEL_OUTLINE_COPIES; k++) {
+                const a = (k / LABEL_OUTLINE_COPIES) * Math.PI * 2;
+                const copy = new THREE.Mesh(mesh.geometry, labelOutlineMaterial);
+                copy.position
+                  .addScaledVector(t1, Math.cos(a) * radius)
+                  .addScaledVector(t2, Math.sin(a) * radius);
+                copy.renderOrder = 5;
+                pivot.add(copy);
+              }
             } else {
+              // Blender's own soft drop-shadow copies, as before
               mesh.material = new THREE.MeshBasicMaterial({
                 color: new THREE.Color(0, 0.02, 0.05),
                 transparent: true,
@@ -487,7 +526,7 @@ export default function GlobeExplorer({ items, onSelect, onBowlOpenChange }: Pro
                 depthWrite: false,
                 side: THREE.DoubleSide,
               });
-              mesh.renderOrder = 2;
+              mesh.renderOrder = 4;
             }
             gltf.scene.remove(mesh);
             pivot.add(mesh);
@@ -570,6 +609,10 @@ export default function GlobeExplorer({ items, onSelect, onBowlOpenChange }: Pro
         canvas,
         frame,
         getLife: () => life,
+        setLabelStyle: (fill: number, outline: number) => {
+          labelFillMaterial.color.set(fill);
+          labelOutlineMaterial.color.set(outline);
+        },
       };
     }
 
