@@ -903,7 +903,7 @@ const styles = StyleSheet.create({
     height: 89, // 800 x 419 artwork
   },
   poweredByText: {
-    marginTop: -spacing.sm,
+    marginTop: spacing.sm, // (was negative to tuck under the old square logo; the new logo has no spare margin)
     fontSize: 14,
     fontWeight: '600',
     color: colors.inkMuted,
